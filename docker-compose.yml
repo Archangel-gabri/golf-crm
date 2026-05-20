@@ -1,0 +1,107 @@
+# Production docker-compose for GolfAdmin v2
+# Usage:
+#   cp .env.example .env  &&  edit .env  (set ENV=production, SECRET_KEY, POSTGRES_*, CORS_ORIGINS, INITIAL_ADMIN_PASSWORD)
+#   docker compose up -d --build
+#   docker compose exec backend alembic upgrade head     # first-time / after pulls
+#   docker compose logs -f backend nginx backup
+#   docker compose logs -f
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: golf-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-golf}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-golf}
+    volumes:
+      - golf_pg_data:/var/lib/postgresql/data
+    networks: [golf_net]
+    # Не публикуем 5432 наружу — БД доступна только внутри docker-сети.
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-golf} -d ${POSTGRES_DB:-golf}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: golf-backend
+    restart: unless-stopped
+    environment:
+      ENV: ${ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-golf}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-golf}}
+      SECRET_KEY: ${SECRET_KEY:?missing SECRET_KEY}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      CLUB_NAME: ${CLUB_NAME:-МГГК · Крылатское}
+      COOKIE_SECURE: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://golf.example.com}
+      PYTHONUNBUFFERED: "1"
+    expose:
+      - "8000"
+    networks: [golf_net]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    container_name: golf-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks: [golf_net]
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: golf-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+    depends_on:
+      - frontend
+      - backend
+    networks: [golf_net]
+
+  backup:
+    image: postgres:16-alpine
+    container_name: golf-backup
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-golf}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-golf}
+      BACKUP_DIR: /backups
+      RETAIN_DAYS: ${BACKUP_RETAIN_DAYS:-30}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./scripts/backup-postgres.sh:/usr/local/bin/backup-postgres.sh:ro
+      - golf_backups:/backups
+    command: ["/bin/sh", "/usr/local/bin/backup-postgres.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [golf_net]
+
+volumes:
+  golf_pg_data:
+  golf_backups:
+
+networks:
+  golf_net:
+    driver: bridge
