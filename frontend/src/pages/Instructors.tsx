@@ -38,6 +38,7 @@ export default function Instructors() {
                       <div className="text-xs font-medium text-brand mt-0.5">{trainerTypeLabel(i.trainer_type)}</div>
                       <div className="text-sm text-stone-500">{i.specialization}</div>
                       {i.phone && <div className="text-xs text-stone-400 mt-0.5 font-mono">{i.phone}</div>}
+                      {i.email && <div className="text-xs text-stone-400 font-mono">{i.email}</div>}
                     </div>
                   </div>
                   {i.bio && <p className="text-sm text-stone-600 mt-3 leading-relaxed">{i.bio}</p>}

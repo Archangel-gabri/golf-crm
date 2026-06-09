@@ -7,7 +7,7 @@ import {
   Pencil, Trash2, AlertTriangle, Ban, Pause, CircleCheck,
   GraduationCap, LayoutGrid, Filter, Clock,
 } from "lucide-react";
-import { api, type Booking, type Instructor, type Resource, type Service, type Zone } from "@/lib/api";
+import { api, type Booking, type ClubEvent, type Instructor, type Resource, type Service, type Zone } from "@/lib/api";
 import { cn, formatRub, formatTime } from "@/lib/utils";
 import BookingDialog from "@/components/BookingDialog";
 import BookingScenarioDialog from "@/components/BookingScenarioDialog";
@@ -57,6 +57,42 @@ function fmtShortDay(iso: string) {
   return `${wd} ${dm}`;
 }
 
+function hexToRgba(color: string | null | undefined, alpha: number) {
+  const raw = (color || "#155E3F").trim();
+  const short = raw.match(/^#([0-9a-f]{3})$/i);
+  const full = raw.match(/^#([0-9a-f]{6})$/i);
+  const hex = full?.[1] || short?.[1]?.split("").map((c) => c + c).join("");
+  if (!hex) return `rgba(21, 94, 63, ${alpha})`;
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function eventTouchesDay(event: ClubEvent, dayISO: string) {
+  const dayStart = new Date(dayISO + "T00:00:00").getTime();
+  const dayEnd = new Date(addDays(dayISO, 1) + "T00:00:00").getTime();
+  return new Date(event.starts_at).getTime() < dayEnd && new Date(event.ends_at).getTime() > dayStart;
+}
+
+function eventBoundsForDay(event: ClubEvent, dayISO: string) {
+  const dayStart = new Date(dayISO + "T00:00:00").getTime();
+  const dayEnd = new Date(addDays(dayISO, 1) + "T00:00:00").getTime();
+  const startMs = event.all_day ? dayStart : Math.max(new Date(event.starts_at).getTime(), dayStart);
+  const endMs = event.all_day ? dayEnd : Math.min(new Date(event.ends_at).getTime(), dayEnd);
+  if (endMs <= startMs) return null;
+  const startMin = Math.max(OPEN_MIN, Math.floor((startMs - dayStart) / 60_000));
+  const endMin = Math.min(CLOSE_MIN, Math.ceil((endMs - dayStart) / 60_000));
+  const top = ((startMin - OPEN_MIN) / 60) * HOUR_HEIGHT;
+  const height = Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT - 2, event.all_day ? 36 : 24);
+  return { top, height };
+}
+
+function eventTimeLabel(event: ClubEvent) {
+  if (event.all_day) return "весь день";
+  return `${formatTime(event.starts_at)} - ${formatTime(event.ends_at)}`;
+}
+
 // Google-calendar style overlap split within a single column
 function assignColumns(items: Booking[]) {
   const result = new Map<number, { col: number; cols: number }>();
@@ -92,7 +128,7 @@ function assignColumns(items: Booking[]) {
 
 export default function Dashboard() {
   const qc = useQueryClient();
-  const { isInstructor, canCreateBookings, canEditBookings, canDeleteBookings } = usePerms();
+  const { isAdmin, isInstructor, canCreateBookings, canEditBookings, canDeleteBookings } = usePerms();
   const [view, setView] = useState<View>("day");
   const [anchor, setAnchor] = useState<string>(toISO(new Date()));
   const [dialog, setDialog] = useState<Booking | "new" | null>(null);
@@ -130,6 +166,14 @@ export default function Dashboard() {
       }
       return api.bookings({ on: anchor });
     },
+  });
+  const { data: adminEvents = [] } = useQuery<ClubEvent[]>({
+    queryKey: ["events", "dashboard", view, view === "week" ? weekStart : anchor],
+    queryFn: () => api.events({
+      from: `${view === "week" ? weekStart : anchor}T00:00:00`,
+      to: `${view === "week" ? weekEnd : addDays(anchor, 1)}T00:00:00`,
+    }),
+    enabled: isAdmin && (view === "day" || view === "week"),
   });
 
   const bookings = useMemo(() => {
@@ -317,6 +361,7 @@ export default function Dashboard() {
         <DayTimeline
           date={anchor}
           bookings={bookings}
+          events={adminEvents}
           onOpen={setDialog}
           now={now}
           onTransition={(id, to, reason) => transition.mutate({ id, to, reason })}
@@ -333,6 +378,7 @@ export default function Dashboard() {
           anchor={anchor}
           days={weekDays}
           bookings={bookings}
+          events={adminEvents}
           onOpen={setDialog}
           now={now}
           onTransition={(id, to, reason) => transition.mutate({ id, to, reason })}
@@ -492,11 +538,13 @@ function HourGutter() {
 }
 
 function TimelineColumn({
-  title, bookings, isToday, onOpen, highlight, now, onTransition, onDelete, onExtend,
+  title, date, bookings, events = [], isToday, onOpen, highlight, now, onTransition, onDelete, onExtend,
   isInstructor, canEditBookings, canDeleteBookings,
 }: {
   title: string;
+  date?: string;
   bookings: Booking[];
+  events?: ClubEvent[];
   isToday?: boolean;
   onOpen: (b: Booking) => void;
   highlight?: boolean;
@@ -509,6 +557,12 @@ function TimelineColumn({
   canDeleteBookings: boolean;
 }) {
   const colMap = useMemo(() => assignColumns(bookings), [bookings]);
+  const dayEvents = useMemo(() => {
+    if (!date) return [];
+    return events
+      .filter((event) => eventTouchesDay(event, date))
+      .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
+  }, [date, events]);
 
   // Красная линия "сейчас" — показываем только в колонке текущего дня,
   // если время попадает в визуальный диапазон суток [00:00..24:00].
@@ -546,6 +600,34 @@ function TimelineColumn({
           style={{ top: TOTAL_HEIGHT }}
         />
 
+        {/* Admin event layer — faintly visible under booking cards. */}
+        {date && dayEvents.map((event, index) => {
+          const bounds = eventBoundsForDay(event, date);
+          if (!bounds) return null;
+          const inset = 4 + Math.min(index % 3, 2) * 4;
+          return (
+            <div
+              key={event.id}
+              aria-hidden="true"
+              className="pointer-events-none absolute z-[1] overflow-hidden rounded-md border px-2 py-1 text-[11px] font-medium leading-tight"
+              style={{
+                top: bounds.top,
+                height: bounds.height,
+                left: inset,
+                right: 4,
+                backgroundColor: hexToRgba(event.color, event.active ? 0.14 : 0.08),
+                borderColor: hexToRgba(event.color, event.active ? 0.5 : 0.28),
+                color: hexToRgba(event.color, 0.95),
+              }}
+            >
+              <div className="truncate">{event.title}</div>
+              {bounds.height > 34 && (
+                <div className="truncate text-[10px] font-normal opacity-75">{eventTimeLabel(event)}</div>
+              )}
+            </div>
+          );
+        })}
+
         {/* Red "now" line — visible only in today's column */}
         {showNowLine && (
           <div
@@ -575,7 +657,7 @@ function TimelineColumn({
             <div
               key={b.id}
               className={cn(
-                "group absolute rounded-md text-white shadow-sm overflow-hidden",
+                "group absolute z-[4] rounded-md text-white shadow-sm overflow-hidden",
                 isLate ? statusBg("late") : statusBg(b.status),
                 isLate && "ring-2 ring-orange-300"
               )}
@@ -826,9 +908,9 @@ function ActionsMenu({
 }
 
 function DayTimeline({
-  date, bookings, onOpen, now, onTransition, onDelete, onExtend, isInstructor, canEditBookings, canDeleteBookings,
+  date, bookings, events = [], onOpen, now, onTransition, onDelete, onExtend, isInstructor, canEditBookings, canDeleteBookings,
 }: {
-  date: string; bookings: Booking[]; onOpen: (b: Booking) => void;
+  date: string; bookings: Booking[]; events?: ClubEvent[]; onOpen: (b: Booking) => void;
   now: number;
   onTransition: (id: number, to: string, reason?: string) => void;
   onDelete: (id: number) => void;
@@ -844,7 +926,9 @@ function DayTimeline({
         <HourGutter />
         <TimelineColumn
           title={fmtRuWeekday(date)}
+          date={date}
           bookings={bookings}
+          events={events}
           isToday={date === todayISO}
           onOpen={onOpen}
           highlight={date === todayISO}
@@ -862,11 +946,12 @@ function DayTimeline({
 }
 
 function WeekTimeline({
-  anchor, days, bookings, onOpen, now, onTransition, onDelete, onExtend, isInstructor, canEditBookings, canDeleteBookings,
+  anchor, days, bookings, events = [], onOpen, now, onTransition, onDelete, onExtend, isInstructor, canEditBookings, canDeleteBookings,
 }: {
   anchor: string;
   days: string[];
   bookings: Booking[];
+  events?: ClubEvent[];
   onOpen: (b: Booking) => void;
   now: number;
   onTransition: (id: number, to: string, reason?: string) => void;
@@ -890,7 +975,9 @@ function WeekTimeline({
           <TimelineColumn
             key={d}
             title={fmtShortDay(d)}
+            date={d}
             bookings={byDay[d] || []}
+            events={events}
             isToday={d === toISO(new Date())}
             highlight={d === anchor}
             onOpen={onOpen}

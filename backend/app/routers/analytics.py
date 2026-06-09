@@ -192,9 +192,13 @@ def _classify_direction(
         return "hole_19_20", "Лунка 19,20"
 
     if base_cat == "course_play":
+        if t_suffix:
+            return f"course_play::{t_suffix}", f"Поле 9/18 лунок + {t_suffix}"
         return "course_play", "Поле 9/18 лунок"
 
     if base_cat == "intro_course":
+        if t_suffix:
+            return f"intro_course::{t_suffix}", f"Вводный курс + {t_suffix}"
         return "intro_course", "Вводный курс"
 
     if base_cat == "rental":

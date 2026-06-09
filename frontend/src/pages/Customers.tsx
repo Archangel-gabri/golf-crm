@@ -1,17 +1,18 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type Customer } from "@/lib/api";
+import { api, type Customer, type CustomerVisit } from "@/lib/api";
 import { Plus, Search, X, Edit2, Trash2 } from "lucide-react";
 import { formatRub, cn } from "@/lib/utils";
 import { usePerms } from "@/hooks/useAuth";
 
 export default function Customers() {
   const qc = useQueryClient();
-  const { canEditCustomers } = usePerms();
+  const { canEditCustomers, canSeeCreatedBy } = usePerms();
   const [q, setQ] = useState("");
   const [createdFrom, setCreatedFrom] = useState("");
   const [createdTo, setCreatedTo] = useState("");
   const [editing, setEditing] = useState<Partial<Customer> | null>(null);
+  const [visitsCustomer, setVisitsCustomer] = useState<Customer | null>(null);
 
   const { data } = useQuery({
     queryKey: ["customers", q, createdFrom, createdTo],
@@ -104,6 +105,7 @@ export default function Customers() {
               <th className="pb-2 font-medium text-right">Визитов</th>
               <th className="pb-2 font-medium text-right pr-6">Потратил</th>
               <th className="pb-2 font-medium pl-4">Абонементы</th>
+              {canSeeCreatedBy && <th className="pb-2 font-medium">Кто завёл</th>}
               <th className="pb-2 font-medium">Машина</th>
               <th className="pb-2 font-medium">Заметки</th>
               <th className="pb-2"></th>
@@ -117,7 +119,13 @@ export default function Customers() {
                   <td>{c.phone}</td>
                   <td className="text-stone-600">{c.email}</td>
                   <td className="text-right font-semibold whitespace-nowrap">
-                    {c.visits ?? 0}
+                    <button
+                      className="hover:text-brand hover:underline cursor-pointer"
+                      onClick={() => setVisitsCustomer(c as Customer)}
+                      title="Посмотреть историю посещений"
+                    >
+                      {c.visits ?? 0}
+                    </button>
                   </td>
                   <td className="text-right font-semibold text-brand whitespace-nowrap pr-6">
                     {formatRub(c.total_spent_kopecks ?? 0)}
@@ -138,6 +146,11 @@ export default function Customers() {
                       <span className="text-stone-300 text-xs">—</span>
                     )}
                   </td>
+                  {canSeeCreatedBy && (
+                    <td className="text-stone-500 text-xs whitespace-nowrap">
+                      {c.created_by_name || "—"}
+                    </td>
+                  )}
                   <td className="text-stone-600">
                     {c.car_brand} {c.car_number && <span className="font-mono text-xs">{c.car_number}</span>}
                   </td>
@@ -164,7 +177,7 @@ export default function Customers() {
               ))
             ) : (
               <tr>
-                <td colSpan={9} className="py-10 text-center text-stone-400">
+                <td colSpan={canSeeCreatedBy ? 10 : 9} className="py-10 text-center text-stone-400">
                   Клиентов не найдено
                 </td>
               </tr>
@@ -173,6 +186,10 @@ export default function Customers() {
         </table>
         </div>
       </div>
+
+      {visitsCustomer && (
+        <VisitsModal customer={visitsCustomer} onClose={() => setVisitsCustomer(null)} />
+      )}
 
       {editing && (
         <div className="modal-overlay" onClick={() => setEditing(null)}>
@@ -257,6 +274,87 @@ export default function Customers() {
           </form>
         </div>
       )}
+    </div>
+  );
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  confirmed: "Подтверждена",
+  completed: "Завершена",
+  checked_in: "На месте",
+  cancelled: "Отменена",
+  no_show: "Не пришёл",
+  draft: "Черновик",
+  held: "Удержана",
+};
+
+function VisitsModal({ customer, onClose }: { customer: Customer; onClose: () => void }) {
+  const { data: visits, isLoading } = useQuery({
+    queryKey: ["customer-visits", customer.id],
+    queryFn: () => api.customerVisits(customer.id),
+  });
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal-panel max-w-2xl w-full p-4 sm:p-6 max-h-[80vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="font-semibold text-lg">История посещений</h2>
+            <div className="text-sm text-stone-500">{customer.name}</div>
+          </div>
+          <button type="button" onClick={onClose}><X size={20} /></button>
+        </div>
+
+        {isLoading ? (
+          <div className="py-10 text-center text-stone-400">Загрузка...</div>
+        ) : !visits?.length ? (
+          <div className="py-10 text-center text-stone-400">Посещений пока нет</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-left text-stone-500 border-b border-stone-200">
+              <tr>
+                <th className="pb-2 font-medium">Дата</th>
+                <th className="pb-2 font-medium">Услуга</th>
+                <th className="pb-2 font-medium">Тренер</th>
+                <th className="pb-2 font-medium">Зона</th>
+                <th className="pb-2 font-medium text-right">Гостей</th>
+                <th className="pb-2 font-medium text-right">Сумма</th>
+                <th className="pb-2 font-medium">Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visits.map((v) => (
+                <tr key={v.booking_id} className="border-t border-stone-100">
+                  <td className="py-2 whitespace-nowrap font-mono text-xs">
+                    {new Date(v.date).toLocaleDateString("ru-RU")}
+                  </td>
+                  <td className="py-2">{v.service_name || "—"}</td>
+                  <td className="py-2">{v.instructor_name || "—"}</td>
+                  <td className="py-2">{v.resource_name || "—"}</td>
+                  <td className="py-2 text-right">{v.guests}</td>
+                  <td className="py-2 text-right font-semibold text-brand whitespace-nowrap">
+                    {formatRub(v.total_kopecks)}
+                  </td>
+                  <td className="py-2">
+                    <span className={cn(
+                      "text-xs px-1.5 py-0.5 rounded",
+                      v.status === "completed" ? "bg-emerald-50 text-emerald-700" :
+                      v.status === "cancelled" ? "bg-red-50 text-red-600" :
+                      v.status === "no_show" ? "bg-amber-50 text-amber-700" :
+                      "bg-stone-100 text-stone-600"
+                    )}>
+                      {STATUS_LABELS[v.status] || v.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }

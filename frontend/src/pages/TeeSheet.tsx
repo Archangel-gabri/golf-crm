@@ -5,6 +5,7 @@ import { cn, formatRub, formatTime, statusColor } from "@/lib/utils";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import BookingDialog from "@/components/BookingDialog";
 import BookingScenarioDialog from "@/components/BookingScenarioDialog";
+import BookingActionPanel from "@/components/BookingActionPanel";
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function addDays(iso: string, d: number) {
@@ -79,6 +80,7 @@ export default function TeeSheet() {
   // allows any minute (HH:MM), so users can book at 8:17 or 12:33 too.
   const granularity = 15;
   const [dialog, setDialog] = useState<{ resource: Resource; time: string } | Booking | null>(null);
+  const [actionPanel, setActionPanel] = useState<Booking | null>(null);
 
   const { data: resources } = useQuery({ queryKey: ["visible-resources"], queryFn: api.visibleResources });
   const { data: bookings } = useQuery({
@@ -210,7 +212,7 @@ export default function TeeSheet() {
                       <button
                         key={b.id}
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setDialog(b); }}
+                        onClick={(e) => { e.stopPropagation(); setActionPanel(b); }}
                         className={cn(
                           "absolute text-xs px-1.5 py-0.5 rounded border overflow-hidden text-left hover:brightness-95 transition",
                           statusColor(b.status)
@@ -238,6 +240,14 @@ export default function TeeSheet() {
           })}
         </div>
       </div>
+
+      {actionPanel && (
+        <BookingActionPanel
+          booking={actionPanel}
+          onClose={() => setActionPanel(null)}
+          onEdit={() => { const b = actionPanel; setActionPanel(null); setDialog(b); }}
+        />
+      )}
 
       {dialog && "resource_id" in dialog ? (
         <BookingDialog mode="edit" booking={dialog as Booking} onClose={() => setDialog(null)} />

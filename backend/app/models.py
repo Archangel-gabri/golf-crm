@@ -147,6 +147,32 @@ class Blackout(Base, TimestampMixin):
     resource: Mapped[Optional[Resource]] = relationship(back_populates="blackouts")
 
 
+class ClubEvent(Base, TimestampMixin):
+    """Admin-managed club event shown in the standalone events calendar.
+
+    These records are informational: they do not reserve resources or block
+    booking slots. Operational blocking should still use bookings/blackouts.
+    """
+    __tablename__ = "events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), default="other", nullable=False, index=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    ends_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    all_day: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    location: Mapped[str] = mapped_column(String(160), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    capacity: Mapped[Optional[int]] = mapped_column(Integer)
+    color: Mapped[str] = mapped_column(String(16), default="#155E3F")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    __table_args__ = (
+        Index("ix_events_time", "starts_at", "ends_at"),
+        CheckConstraint("ends_at > starts_at", name="event_time_valid"),
+    )
+
+
 class Customer(Base, TimestampMixin):
     __tablename__ = "customers"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -192,13 +218,15 @@ class MembershipPlan(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     tier: Mapped[int] = mapped_column(Integer, default=1)
     price_kopecks: Mapped[int] = mapped_column(BigInteger, default=0)
-    duration_days: Mapped[int] = mapped_column(Integer, default=365)
+    duration_days: Mapped[int] = mapped_column(Integer, default=90)
     discount_percent: Mapped[int] = mapped_column(Integer, default=0)
     priority_booking_days: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(Text, default="")
     # Абонемент-style perks — optional, default false.
     covers_training: Mapped[bool] = mapped_column(Boolean, default=False)
     max_trainings: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unlimited
+    # When true, the entire booking (field + equipment + training) is covered, not just training.
+    covers_all_services: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
@@ -282,6 +310,13 @@ class InstructorResource(Base):
     __tablename__ = "instructor_resources"
     instructor_id: Mapped[int] = mapped_column(ForeignKey("instructors.id", ondelete="CASCADE"), primary_key=True)
     resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id", ondelete="CASCADE"), primary_key=True)
+
+
+class InstructorCustomer(Base, TimestampMixin):
+    """M2M link: trainer → client. Trainer sees only their linked clients."""
+    __tablename__ = "instructor_customers"
+    instructor_id: Mapped[int] = mapped_column(ForeignKey("instructors.id", ondelete="CASCADE"), primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True)
 
 
 class ResourceService(Base):

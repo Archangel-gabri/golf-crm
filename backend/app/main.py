@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -11,11 +11,11 @@ from .config import settings
 from .csrf import CSRFMiddleware
 from .db import Base, engine, SessionLocal
 from .enums import BookingStatus, AuditAction
-from .models import Booking
+from .models import Booking, Membership
 from .routers import (
     auth, resources, bookings, customers, catalog, dashboard,
     analytics, admin, search, calendar, memberships, specializations, catalog_admin,
-    coupons, tags, demo, me, sse,
+    coupons, tags, events, demo, me, sse,
 )
 from .catalog_sync import ensure_official_price_catalog
 from .migrations import apply_migrations
@@ -102,6 +102,37 @@ async def _autocomplete_loop():
         await asyncio.sleep(AUTOCOMPLETE_INTERVAL_SECONDS)
 
 
+def _deactivate_expired_memberships() -> int:
+    """Деактивирует абонементы с ends_on < сегодня."""
+    today = date.today()
+    deactivated = 0
+    with SessionLocal() as db:
+        rows = list(db.execute(
+            select(Membership).where(
+                Membership.active == True,  # noqa: E712
+                Membership.ends_on < today,
+            )
+        ).scalars())
+        for m in rows:
+            m.active = False
+            deactivated += 1
+        if deactivated:
+            db.commit()
+    return deactivated
+
+
+async def _membership_expiry_loop():
+    """Фоновая задача: каждые 6 часов помечает абонементы с истёкшим сроком как неактивные."""
+    while True:
+        try:
+            deactivated = await asyncio.to_thread(_deactivate_expired_memberships)
+            if deactivated:
+                log.info("Deactivated %d expired memberships", deactivated)
+        except Exception:
+            log.exception("Membership expiry loop error (will retry)")
+        await asyncio.sleep(3600 * 6)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
@@ -112,14 +143,17 @@ async def lifespan(app: FastAPI):
         ensure_official_price_catalog(db)
         db.commit()
     task = asyncio.create_task(_autocomplete_loop())
+    task2 = asyncio.create_task(_membership_expiry_loop())
     try:
         yield
     finally:
         task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
+        task2.cancel()
+        for t in (task, task2):
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 app = FastAPI(
@@ -170,6 +204,7 @@ app.include_router(specializations.router)
 app.include_router(catalog_admin.router)
 app.include_router(coupons.router)
 app.include_router(tags.router)
+app.include_router(events.router)
 if not settings.is_production:
     app.include_router(demo.router)
 app.include_router(me.router)

@@ -2,14 +2,14 @@ import threading
 from datetime import datetime, date
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
 
 from ..db import get_db
 from ..deps import get_current_user, require_manager
 from ..models import Booking, BookingItem, Service, User, Coupon, Instructor
 from ..schemas import (
-    BookingIn, BookingOut, BookingRichOut, BookingPatch,
+    BookingIn, BookingOut, BookingRichOut, BookingItemOut, BookingPatch,
     ScenarioIn, ScenarioCatalog,
 )
 from ..enums import BookingStatus, PaymentStatus, AuditAction, UserRole
@@ -132,6 +132,7 @@ def _rich(b: Booking) -> BookingRichOut:
         service_name=b.service.name if b.service else None,
         resource_name=b.resource.name if b.resource else None,
         instructor_name=b.instructor.name if b.instructor else None,
+        items=[BookingItemOut.model_validate(it) for it in (b.items or [])],
     )
 
 
@@ -145,7 +146,7 @@ def list_bookings(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = select(Booking)
+    q = select(Booking).options(selectinload(Booking.items))
     if on:
         day_start = datetime.combine(on, datetime.min.time())
         day_end = datetime.combine(on, datetime.max.time())
@@ -262,7 +263,7 @@ def create_booking(
 
 @router.get("/{booking_id}", response_model=BookingRichOut)
 def get_booking(booking_id: int, user=Depends(get_current_user), db: Session = Depends(get_db)):
-    b = db.get(Booking, booking_id)
+    b = db.get(Booking, booking_id, options=[selectinload(Booking.items)])
     if not b:
         raise HTTPException(404, "Not found")
     return _rich(b)
@@ -294,7 +295,7 @@ def transition(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    b = db.get(Booking, booking_id)
+    b = db.get(Booking, booking_id, options=[selectinload(Booking.items)])
     if not b:
         raise HTTPException(404, "Not found")
     if to not in _TRANSITIONS.get(b.status, set()):
@@ -366,7 +367,7 @@ def set_payment(
         raise HTTPException(403, "Только администратор, менеджер или бухгалтер может менять статус оплаты")
     if to not in _PAYMENT_TARGETS:
         raise HTTPException(400, f"Недопустимый статус оплаты: {to}")
-    b = db.get(Booking, booking_id)
+    b = db.get(Booking, booking_id, options=[selectinload(Booking.items)])
     if not b:
         raise HTTPException(404, "Not found")
     before = {"payment_status": b.payment_status}
@@ -387,7 +388,7 @@ def patch_booking(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    b = db.get(Booking, booking_id)
+    b = db.get(Booking, booking_id, options=[selectinload(Booking.items)])
     if not b:
         raise HTTPException(404, "Not found")
     if user.role == UserRole.INSTRUCTOR.value:
@@ -465,7 +466,7 @@ def extend_booking(
     db: Session = Depends(get_db),
 ):
     """Быстрое продление брони на N минут. Пересчитывает цену по новой длительности."""
-    b = db.get(Booking, booking_id)
+    b = db.get(Booking, booking_id, options=[selectinload(Booking.items)])
     if not b:
         raise HTTPException(404, "Not found")
     if b.status in (BookingStatus.CANCELLED.value, BookingStatus.COMPLETED.value):
@@ -524,16 +525,21 @@ def extend_booking(
     }
     b.ends_at = new_end
 
-    # Пересчёт цены по новой длительности — только если не задана ручная цена.
-    duration_min = int((b.ends_at - b.starts_at).total_seconds() // 60)
-    pb = pricing.calculate_price(
-        db,
-        service_id=b.service_id, instructor_id=b.instructor_id,
-        guests=b.guests, duration_min=duration_min, coupon_code=b.coupon_code or "",
-    )
-    b.price_kopecks = pb.base_kopecks
-    b.discount_kopecks = pb.discount_kopecks
-    b.total_kopecks = max(0, b.price_kopecks - b.discount_kopecks)
+    # Scenario bookings (with stored line-items) already encode the correct
+    # basket/training split — don't overwrite via the legacy pro-rata engine,
+    # same guard as full_edit_booking.  Legacy bookings (no items) are still
+    # repriced proportionally by duration.
+    has_stored_items = bool(b.items)
+    if not has_stored_items:
+        duration_min = int((b.ends_at - b.starts_at).total_seconds() // 60)
+        pb = pricing.calculate_price(
+            db,
+            service_id=b.service_id, instructor_id=b.instructor_id,
+            guests=b.guests, duration_min=duration_min, coupon_code=b.coupon_code or "",
+        )
+        b.price_kopecks = pb.base_kopecks
+        b.discount_kopecks = pb.discount_kopecks
+        b.total_kopecks = max(0, b.price_kopecks - b.discount_kopecks)
 
     audit.log(db, user, AuditAction.UPDATE.value, "booking", b.id,
               summary=f"Продление брони #{b.id} на +{payload.minutes} мин",
@@ -552,7 +558,7 @@ def full_edit_booking(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    b = db.get(Booking, booking_id)
+    b = db.get(Booking, booking_id, options=[selectinload(Booking.items)])
     if not b:
         raise HTTPException(404, "Not found")
     # Тренер может править только свои брони и не может передать её другому тренеру.
@@ -596,22 +602,42 @@ def full_edit_booking(
     if trainer_err:
         raise HTTPException(409, trainer_err)
 
-    # Recalculate price
+    # Recalculate price — but only via the legacy engine when an explicit manual
+    # override is given, OR when the booking has no stored line-items (old-style
+    # booking created before scenario was introduced).  Scenario bookings (those
+    # with BookingItems) already store the correct split between field and
+    # training; re-pricing them through the old engine would overwrite the
+    # training price with the full field price.
     duration_min = int((b.ends_at - b.starts_at).total_seconds() // 60)
     new_coupon = payload.coupon_code if payload.coupon_code is not None else b.coupon_code
-    pb = pricing.calculate_price(
-        db,
-        service_id=b.service_id, instructor_id=b.instructor_id,
-        guests=b.guests, duration_min=duration_min, coupon_code=new_coupon or "",
-    )
+    has_stored_items = bool(b.items)
     if payload.manual_price_kopecks is not None:
+        pb = pricing.calculate_price(
+            db,
+            service_id=b.service_id, instructor_id=b.instructor_id,
+            guests=b.guests, duration_min=duration_min, coupon_code=new_coupon or "",
+        )
         b.price_kopecks = payload.manual_price_kopecks
         b.discount_kopecks = pb.discount_kopecks if pb.coupon_valid else 0
-    else:
+        b.total_kopecks = max(0, b.price_kopecks - b.discount_kopecks)
+        b.coupon_code = new_coupon or "" if pb.coupon_valid or not new_coupon else b.coupon_code
+    elif not has_stored_items:
+        pb = pricing.calculate_price(
+            db,
+            service_id=b.service_id, instructor_id=b.instructor_id,
+            guests=b.guests, duration_min=duration_min, coupon_code=new_coupon or "",
+        )
         b.price_kopecks = pb.base_kopecks
         b.discount_kopecks = pb.discount_kopecks
-    b.total_kopecks = max(0, b.price_kopecks - b.discount_kopecks)
-    b.coupon_code = new_coupon or "" if pb.coupon_valid or not new_coupon else b.coupon_code
+        b.total_kopecks = max(0, b.price_kopecks - b.discount_kopecks)
+        b.coupon_code = new_coupon or "" if pb.coupon_valid or not new_coupon else b.coupon_code
+    else:
+        # Scenario booking: heal total_kopecks from items in case extend_booking
+        # previously corrupted it with the legacy pro-rata engine.
+        items_subtotal = sum(it.total_kopecks for it in b.items)
+        if items_subtotal > 0:
+            b.price_kopecks = items_subtotal
+            b.total_kopecks = max(0, items_subtotal - b.discount_kopecks)
 
     audit.log(db, user, AuditAction.UPDATE.value, "booking", b.id,
               summary=f"Полное редактирование брони #{b.id}",
@@ -628,13 +654,94 @@ def full_edit_booking(
     return _rich(b)
 
 
+@router.post("/{booking_id}/apply-membership", response_model=BookingRichOut)
+def apply_membership_to_booking(
+    booking_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retroactively cover a booking's training cost with the customer's active membership."""
+    from ..models import Membership, MembershipPlan
+
+    b = db.get(Booking, booking_id, options=[selectinload(Booking.items)])
+    if not b:
+        raise HTTPException(404, "Not found")
+    if not b.instructor_id:
+        raise HTTPException(400, "Бронь без тренировки — нечего покрывать абонементом")
+    if not b.customer_id:
+        raise HTTPException(400, "У брони нет привязанного клиента")
+    if b.status in (BookingStatus.CANCELLED.value, BookingStatus.COMPLETED.value):
+        raise HTTPException(400, "Нельзя изменить завершённую или отменённую бронь")
+
+    if user.role == UserRole.INSTRUCTOR.value:
+        raise HTTPException(403, "Тренер не может применять абонементы")
+
+    booking_day = b.starts_at.date()
+    row = db.execute(
+        select(Membership, MembershipPlan)
+        .join(MembershipPlan, MembershipPlan.id == Membership.plan_id)
+        .where(
+            Membership.customer_id == b.customer_id,
+            Membership.active == True,  # noqa: E712
+            MembershipPlan.covers_training == True,  # noqa: E712
+            Membership.starts_on <= booking_day,
+            Membership.ends_on >= booking_day,
+        )
+        .order_by(Membership.ends_on.asc())
+        .limit(1)
+    ).first()
+
+    if not row:
+        raise HTTPException(404, "У клиента нет активного абонемента с тренировками на дату брони")
+
+    membership, plan = row
+    cap = int(plan.max_trainings or 0)
+    used = int(membership.trainings_used or 0)
+    if cap > 0 and used >= cap:
+        raise HTTPException(400, f"Абонемент «{plan.name}» исчерпан: использовано {used} из {cap} тренировок")
+
+    # Find training line item to get exact training price
+    training_sku_prefixes = ("trial-lesson", "lesson-", "kids-lesson")
+    training_price = 0
+    for item in (b.items or []):
+        if item.kind == "service" and item.service_id:
+            svc = db.get(Service, item.service_id)
+            if svc and any(svc.sku.startswith(p) for p in training_sku_prefixes):
+                training_price = int(item.total_kopecks or 0)
+                break
+
+    if training_price == 0:
+        # No line items — apply to full booking total
+        training_price = int(b.total_kopecks or 0)
+
+    if training_price == 0:
+        raise HTTPException(400, "Стоимость тренировки уже равна нулю")
+
+    before = {"discount_kopecks": b.discount_kopecks, "total_kopecks": b.total_kopecks}
+    b.discount_kopecks = int(b.discount_kopecks or 0) + training_price
+    b.total_kopecks = max(0, int(b.total_kopecks or 0) - training_price)
+    membership.trainings_used = used + 1
+    if cap > 0 and membership.trainings_used >= cap:
+        membership.active = False
+
+    audit.log(db, user, AuditAction.UPDATE.value, "booking", b.id,
+              summary=f"Тренировка покрыта абонементом «{plan.name}» (−{training_price // 100} ₽)",
+              before=before,
+              after={"discount_kopecks": b.discount_kopecks, "total_kopecks": b.total_kopecks})
+    db.commit()
+    broadcast({"type": "bookings"})
+    broadcast({"type": "memberships"})
+    db.refresh(b)
+    return _rich(b)
+
+
 @router.delete("/{booking_id}", status_code=204)
 def delete_booking(
     booking_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    b = db.get(Booking, booking_id)
+    b = db.get(Booking, booking_id, options=[selectinload(Booking.items)])
     if not b:
         raise HTTPException(404, "Not found")
     # Тренеры не могут удалять брони — пусть обращаются к ресепшену.
@@ -646,6 +753,7 @@ def delete_booking(
 
     # Если бронь использовала тренировку из абонемента — возвращаем счётчик,
     # чтобы гость не потерял тренировку при случайном удалении.
+    membership_changed = False
     if b.instructor_id and b.customer_id:
         from ..models import Membership, MembershipPlan
         row = db.execute(
@@ -660,12 +768,20 @@ def delete_booking(
         ).first()
         if row and (row[0].trainings_used or 0) > 0:
             row[0].trainings_used = int(row[0].trainings_used) - 1
+            membership_changed = True
+            # Re-activate if it was auto-deactivated due to exhaustion
+            if not row[0].active:
+                _plan = row[1]
+                if int(_plan.max_trainings or 0) > 0 and int(row[0].trainings_used) < int(_plan.max_trainings):
+                    row[0].active = True
 
     db.delete(b)
     audit.log(db, user, AuditAction.DELETE.value, "booking", booking_id,
               summary=f"Удалена бронь #{booking_id} (статус {b.status})")
     db.commit()
     broadcast({"type": "bookings"})
+    if membership_changed:
+        broadcast({"type": "memberships"})
 
 
 # ─────────────────── Scenario-driven booking flow ─────────────────────
@@ -822,10 +938,13 @@ def create_scenario_booking(
     # Consume one абонемент training use if the membership covered the trainer part.
     effective_membership_id = payload.membership_id or payload.membership_purchase_id
     if effective_membership_id and payload.has_training and quote.membership_training_covered:
-        from ..models import Membership as _Membership
+        from ..models import Membership as _Membership, MembershipPlan as _MembershipPlan
         m = db.get(_Membership, effective_membership_id)
         if m:
             m.trainings_used = int(m.trainings_used or 0) + 1
+            _plan = db.get(_MembershipPlan, m.plan_id)
+            if _plan and int(_plan.max_trainings or 0) > 0 and m.trainings_used >= int(_plan.max_trainings):
+                m.active = False
 
     audit.log(db, user, AuditAction.CREATE.value, "booking", b.id,
               summary=f"Создана бронь #{b.id} · {quote.category_short} · {quote.total_kopecks // 100} ₽")

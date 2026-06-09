@@ -68,5 +68,6 @@ export function usePerms() {
     canDeleteBookings: isManager || isStaff,
     /** Can extend an existing booking by N minutes */
     canExtendBookings: isManager || isStaff || isInstructor,
+    canSeeCreatedBy: isManager || isStaff,
   };
 }

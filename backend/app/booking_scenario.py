@@ -664,7 +664,10 @@ def resolve_scenario(db: Session, inp: ScenarioInput) -> ResolvedScenario:
                     " Поддерживаются 1–4."
                 )
             else:
-                training_sku, training_price_kopecks = TRAINING_MATRIX[key]
+                training_sku, base_training_price = TRAINING_MATRIX[key]
+                duration_min = (inp.ends_at - inp.starts_at).total_seconds() / 60
+                duration_hours = max(1.0, duration_min / 60)
+                training_price_kopecks = round(base_training_price * duration_hours)
                 training_label = (
                     f"{TRAINING_TYPE_LABELS[inp.training_type]} "
                     f"({inp.guests} {'ребёнка' if inp.training_type == 'kids' else 'гостя'})"
@@ -803,6 +806,8 @@ def resolve_scenario(db: Session, inp: ScenarioInput) -> ResolvedScenario:
         base_price_kopecks = base_unit_price * max(1, inp.guests)
     else:
         base_price_kopecks = base_unit_price
+    if inp.has_training:
+        base_price_kopecks = 0
 
     range_balls_included = (
         cat_meta["resource_pool"] == "range"
@@ -862,11 +867,21 @@ def resolve_scenario(db: Session, inp: ScenarioInput) -> ResolvedScenario:
                 warnings.append(
                     f"Абонемент «{plan.name if plan else m.id}» не действует на дату брони — скидка не применена."
                 )
-            # Training coverage (абонемент): zero out the lesson part
-            if (in_period and plan and plan.covers_training and inp.has_training
+            cap = int(plan.max_trainings or 0) if plan else 0
+            used = int(m.trainings_used or 0)
+            # Covers field + training only — equipment/addons are NOT included
+            if in_period and plan and plan.covers_all_services and service_subtotal > 0:
+                if cap == 0 or used < cap:
+                    coverage = base_price_kopecks + training_price_kopecks
+                    membership_training_covered = inp.has_training
+                    labels.append("поле + тренировка покрыты")
+                else:
+                    warnings.append(
+                        f"Абонемент «{plan.name}» исчерпан — использовано {used} из {cap}."
+                    )
+            # Training-only coverage: zero out just the lesson part
+            elif (in_period and plan and plan.covers_training and inp.has_training
                     and training_price_kopecks > 0):
-                cap = int(plan.max_trainings or 0)
-                used = int(m.trainings_used or 0)
                 if cap == 0 or used < cap:
                     coverage = training_price_kopecks
                     membership_training_covered = True

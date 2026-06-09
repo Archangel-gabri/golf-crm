@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, Calculator, AlertCircle, Clock } from "lucide-react";
-import { api, type Booking, type Resource } from "@/lib/api";
+import { api, type Booking, type BookingItem, type Resource } from "@/lib/api";
 import { formatRub } from "@/lib/utils";
 import { usePerms } from "@/hooks/useAuth";
 
@@ -375,7 +375,44 @@ export default function BookingDialog(props: Props) {
           </div>
 
           {/* Price breakdown */}
-          {quote && (
+          {!isCreate ? (
+            // Edit mode: always show stored price from booking record (never reprice via old engine)
+            <div className="bg-stone-50 rounded-lg p-4 space-y-1 text-sm" data-testid="dialog-quote">
+              <div className="font-semibold text-stone-700 flex items-center gap-2 mb-2">
+                <Calculator size={14} /> {((props as any).booking?.items?.length > 0) ? "Состав брони" : "Сохранённая стоимость"}
+              </div>
+              {((props as any).booking?.items?.length > 0) ? (
+                ((props as any).booking.items as BookingItem[]).map((item) => (
+                  <div key={item.id} className="flex justify-between">
+                    <span className="text-stone-600">
+                      {item.name}{item.quantity > 1 ? ` × ${item.quantity}` : ""}
+                    </span>
+                    <span className="font-mono">{formatRub(item.total_kopecks)}</span>
+                  </div>
+                ))
+              ) : null}
+              {(props as any).booking?.discount_kopecks > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>Скидка</span>
+                  <span className="font-mono">-{formatRub((props as any).booking.discount_kopecks)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-bold text-base border-t border-stone-200 pt-1.5 mt-1.5">
+                <span>Итого</span>
+                <span className="font-mono text-brand">{formatRub(
+                  (() => {
+                    const items: BookingItem[] = (props as any).booking?.items ?? [];
+                    if (items.length > 0) {
+                      const itemsSum = items.reduce((s, it) => s + it.total_kopecks, 0);
+                      return Math.max(0, itemsSum - ((props as any).booking?.discount_kopecks ?? 0));
+                    }
+                    return (props as any).booking?.total_kopecks ?? 0;
+                  })()
+                )}</span>
+              </div>
+            </div>
+          ) : quote ? (
+            // Create mode: show live price quote
             <div className="bg-stone-50 rounded-lg p-4 space-y-1 text-sm" data-testid="dialog-quote">
               <div className="font-semibold text-stone-700 flex items-center gap-2 mb-2">
                 <Calculator size={14} /> Расчёт стоимости
@@ -405,7 +442,7 @@ export default function BookingDialog(props: Props) {
                 </div>
               )}
             </div>
-          )}
+          ) : null}
 
           <div>
             <label className="label">Ручная цена, ₽ (переопределить расчёт)</label>

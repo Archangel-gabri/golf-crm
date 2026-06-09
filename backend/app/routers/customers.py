@@ -6,8 +6,8 @@ from sqlalchemy import select, or_, func
 from ..db import get_db
 from ..deps import get_current_user, require_manager
 from datetime import date
-from ..models import Customer, User, Booking, Membership, MembershipPlan
-from ..schemas import CustomerIn, CustomerOut, CustomerWithStatsOut
+from ..models import Customer, User, Booking, Membership, MembershipPlan, Service, Instructor, Resource
+from ..schemas import CustomerIn, CustomerOut, CustomerWithStatsOut, CustomerVisitOut
 from ..enums import AuditAction, BookingStatus, UserRole
 from ..realtime import broadcast
 from .. import audit
@@ -123,15 +123,23 @@ def list_customers(
     subs_by_customer: dict[int, list[str]] = {}
     for m, p in subs_rows:
         label = p.name
-        if p.covers_training:
+        if p.covers_all_services:
+            label = f"{p.name} · все услуги"
+        elif p.covers_training:
             if p.max_trainings > 0:
                 left = max(0, p.max_trainings - int(m.trainings_used or 0))
-                label = f"{p.name} · {left}/{p.max_trainings}"
+                label = f"{p.name} · {left}/{p.max_trainings} тр."
             else:
-                label = f"{p.name} · ∞"
-        purchase_day = (m.purchased_at.date() if m.purchased_at else m.starts_on)
-        label = f"{label} · куплен {purchase_day:%d.%m.%Y} · до {m.ends_on:%d.%m.%Y}"
+                label = f"{p.name} · ∞ тр."
+        days_left = (m.ends_on - today).days
+        label = f"{label} · ещё {days_left} дн."
         subs_by_customer.setdefault(m.customer_id, []).append(label)
+
+    creator_ids = {c.created_by_id for c in customers if c.created_by_id}
+    creator_names: dict[int, str] = {}
+    if creator_ids and user.role in (UserRole.ADMIN.value, UserRole.MANAGER.value, UserRole.STAFF.value):
+        for u in db.execute(select(User).where(User.id.in_(creator_ids))).scalars():
+            creator_names[u.id] = u.name
 
     out: list[CustomerWithStatsOut] = []
     for c in customers:
@@ -145,6 +153,7 @@ def list_customers(
             visits=visits,
             total_spent_kopecks=spent,
             active_memberships=subs_by_customer.get(c.id, []),
+            created_by_name=creator_names.get(c.created_by_id) if c.created_by_id else None,
         ))
     return out
 
@@ -175,6 +184,39 @@ def get_customer(customer_id: int, user=Depends(get_current_user), db: Session =
         raise HTTPException(404, "Not found")
     _ensure_trainer_can_see(db, user, customer_id)
     return c
+
+
+@router.get("/{customer_id}/visits", response_model=List[CustomerVisitOut])
+def customer_visits(
+    customer_id: int,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    c = db.get(Customer, customer_id)
+    if not c:
+        raise HTTPException(404, "Not found")
+    _ensure_trainer_can_see(db, user, customer_id)
+    rows = db.execute(
+        select(Booking, Service, Instructor, Resource)
+        .outerjoin(Service, Service.id == Booking.service_id)
+        .outerjoin(Instructor, Instructor.id == Booking.instructor_id)
+        .outerjoin(Resource, Resource.id == Booking.resource_id)
+        .where(Booking.customer_id == customer_id)
+        .order_by(Booking.starts_at.desc())
+    ).all()
+    return [
+        CustomerVisitOut(
+            booking_id=b.id,
+            date=b.starts_at,
+            service_name=svc.name if svc else None,
+            instructor_name=inst.name if inst else None,
+            resource_name=res.name if res else None,
+            guests=b.guests,
+            total_kopecks=b.total_kopecks,
+            status=b.status,
+        )
+        for b, svc, inst, res in rows
+    ]
 
 
 @router.put("/{customer_id}", response_model=CustomerOut)

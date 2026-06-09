@@ -71,6 +71,8 @@ def _apply_sqlite_schema_patches(conn):
         conn.execute(text("ALTER TABLE membership_plans ADD COLUMN covers_training BOOLEAN DEFAULT 0"))
     if not _column_exists(conn, "membership_plans", "max_trainings"):
         conn.execute(text("ALTER TABLE membership_plans ADD COLUMN max_trainings INTEGER DEFAULT 0"))
+    if not _column_exists(conn, "membership_plans", "covers_all_services"):
+        conn.execute(text("ALTER TABLE membership_plans ADD COLUMN covers_all_services BOOLEAN DEFAULT 0"))
     if not _column_exists(conn, "memberships", "trainings_used"):
         conn.execute(text("ALTER TABLE memberships ADD COLUMN trainings_used INTEGER DEFAULT 0"))
     if not _column_exists(conn, "memberships", "purchased_at"):

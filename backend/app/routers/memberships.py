@@ -25,12 +25,13 @@ class PlanIn(BaseModel):
     name: str
     tier: int = 1
     price_kopecks: int = 0
-    duration_days: int = 365
+    duration_days: int = 90
     discount_percent: int = 0
     priority_booking_days: int = 0
     description: str = ""
     covers_training: bool = False
     max_trainings: int = 0
+    covers_all_services: bool = False
     active: bool = True
 
 
@@ -42,6 +43,57 @@ class PlanOut(PlanIn):
 @router.get("", response_model=List[PlanOut])
 def list_plans(user=Depends(get_current_user), db: Session = Depends(get_db)):
     return list(db.execute(select(MembershipPlan).order_by(MembershipPlan.tier)).scalars())
+
+
+class ActiveMembershipOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    customer_id: int
+    customer_name: str
+    customer_phone: Optional[str] = None
+    plan_id: int
+    plan_name: str
+    purchased_at: datetime
+    starts_on: date
+    ends_on: date
+    active: bool
+    trainings_used: int = 0
+    plan_covers_training: bool = False
+    plan_max_trainings: int = 0
+    plan_discount_percent: int = 0
+    plan_covers_all_services: bool = False
+
+
+@router.get("/active", response_model=List[ActiveMembershipOut])
+def list_active_memberships(
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from ..models import Customer as CustomerModel
+    today = date.today()
+    rows = list(db.execute(
+        select(Membership, CustomerModel, MembershipPlan)
+        .join(CustomerModel, CustomerModel.id == Membership.customer_id)
+        .join(MembershipPlan, MembershipPlan.id == Membership.plan_id)
+        .where(Membership.active == True, Membership.ends_on >= today)  # noqa: E712
+        .order_by(Membership.ends_on.asc())
+    ).all())
+    return [
+        ActiveMembershipOut(
+            id=m.id, customer_id=m.customer_id,
+            customer_name=c.name, customer_phone=c.phone,
+            plan_id=m.plan_id, plan_name=p.name,
+            purchased_at=m.purchased_at,
+            starts_on=m.starts_on, ends_on=m.ends_on,
+            active=m.active,
+            trainings_used=int(m.trainings_used or 0),
+            plan_covers_training=bool(p.covers_training),
+            plan_max_trainings=int(p.max_trainings or 0),
+            plan_discount_percent=int(p.discount_percent or 0),
+            plan_covers_all_services=bool(p.covers_all_services),
+        )
+        for m, c, p in rows
+    ]
 
 
 @router.post("", response_model=PlanOut, status_code=201)
@@ -111,6 +163,66 @@ def delete_plan(
     broadcast({"type": "memberships"})
 
 
+# ── All membership sales (purchase history) ──────────────────────────
+class MembershipSaleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    customer_id: int
+    customer_name: str
+    customer_phone: Optional[str] = None
+    plan_id: int
+    plan_name: str
+    plan_price_kopecks: int = 0
+    plan_covers_training: bool = False
+    plan_covers_all_services: bool = False
+    plan_max_trainings: int = 0
+    purchased_at: datetime
+    starts_on: date
+    ends_on: date
+    active: bool
+    trainings_used: int = 0
+
+
+@router.get("/sales", response_model=list[MembershipSaleOut])
+def list_membership_sales(
+    from_: Optional[date] = None,
+    to_: Optional[date] = None,
+    customer_id: Optional[int] = None,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from ..models import Customer as CustomerModel
+    q = (
+        select(Membership, CustomerModel, MembershipPlan)
+        .join(CustomerModel, CustomerModel.id == Membership.customer_id)
+        .join(MembershipPlan, MembershipPlan.id == Membership.plan_id)
+    )
+    if from_:
+        q = q.where(Membership.purchased_at >= datetime.combine(from_, datetime.min.time()))
+    if to_:
+        q = q.where(Membership.purchased_at <= datetime.combine(to_, datetime.max.time()))
+    if customer_id:
+        q = q.where(Membership.customer_id == customer_id)
+    q = q.order_by(Membership.purchased_at.desc())
+    rows = list(db.execute(q).all())
+    return [
+        MembershipSaleOut(
+            id=m.id, customer_id=m.customer_id,
+            customer_name=c.name, customer_phone=c.phone,
+            plan_id=m.plan_id, plan_name=p.name,
+            plan_price_kopecks=int(p.price_kopecks or 0),
+            plan_covers_training=bool(p.covers_training),
+            plan_covers_all_services=bool(p.covers_all_services),
+            plan_max_trainings=int(p.max_trainings or 0),
+            purchased_at=m.purchased_at,
+            starts_on=m.starts_on, ends_on=m.ends_on,
+            active=m.active,
+            trainings_used=int(m.trainings_used or 0),
+        )
+        for m, c, p in rows
+    ]
+
+
 # ── Customer ↔ membership assignment ────────────────────────────────
 class CustomerMembershipOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -127,6 +239,7 @@ class CustomerMembershipOut(BaseModel):
     plan_discount_percent: Optional[int] = None
     plan_covers_training: Optional[bool] = None
     plan_max_trainings: Optional[int] = None
+    plan_covers_all_services: Optional[bool] = None
 
 
 class CustomerMembershipIn(BaseModel):
@@ -160,6 +273,7 @@ def list_customer_memberships(
             plan_discount_percent=m.plan.discount_percent if m.plan else None,
             plan_covers_training=m.plan.covers_training if m.plan else None,
             plan_max_trainings=m.plan.max_trainings if m.plan else None,
+            plan_covers_all_services=m.plan.covers_all_services if m.plan else None,
         ))
     return out
 
@@ -203,6 +317,7 @@ def assign_membership(
         plan_discount_percent=plan.discount_percent,
         plan_covers_training=plan.covers_training,
         plan_max_trainings=plan.max_trainings,
+        plan_covers_all_services=plan.covers_all_services,
     )
 
 

@@ -13,13 +13,16 @@ import InstructorEditor from "@/pages/InstructorEditor";
 import Instructors from "@/pages/Instructors";
 import Coupons from "@/pages/Coupons";
 import Bookings from "@/pages/Bookings";
+import Trainings from "@/pages/Trainings";
 import Analytics from "@/pages/Analytics";
 import Audit from "@/pages/Audit";
 import Staff from "@/pages/Staff";
 import Settings from "@/pages/Settings";
 import Memberships from "@/pages/Memberships";
+import MembershipSales from "@/pages/MembershipSales";
 import MySchedule from "@/pages/MySchedule";
 import TrainersSchedule from "@/pages/TrainersSchedule";
+import EventsCalendar from "@/pages/EventsCalendar";
 
 function Protected({ children }: { children: JSX.Element }) {
   const { data: user, isLoading } = useMe();
@@ -106,6 +109,7 @@ export default function App() {
         <Route path="analytics" element={<AdminOrManagerOnly><Analytics /></AdminOrManagerOnly>} />
         <Route path="tee-sheet" element={<NotInstructor><TeeSheet /></NotInstructor>} />
         <Route path="bookings" element={<Bookings />} />
+        <Route path="trainings" element={<Trainings />} />
         <Route path="customers" element={<Customers />} />
         <Route path="my-schedule" element={<InstructorOnly><MySchedule /></InstructorOnly>} />
         <Route path="trainers-schedule" element={<NotInstructor><TrainersSchedule /></NotInstructor>} />
@@ -117,6 +121,8 @@ export default function App() {
         <Route path="instructors-view" element={<Instructors />} />
         <Route path="coupons" element={<Coupons />} />
         <Route path="memberships" element={<Memberships />} />
+        <Route path="membership-sales" element={<MembershipSales />} />
+        <Route path="events" element={<AdminOnly><EventsCalendar /></AdminOnly>} />
         <Route path="staff" element={<AdminOnly><Staff /></AdminOnly>} />
         <Route path="audit" element={<AdminOnly><Audit /></AdminOnly>} />
         <Route path="settings" element={<AdminOnly><Settings /></AdminOnly>} />

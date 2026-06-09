@@ -10,7 +10,7 @@ from ..deps import get_current_user, require_manager, require_admin
 from ..models import (
     Service, Instructor, Resource, Zone, InstructorSpecialization,
     InstructorServicePrice, InstructorResource, ResourceService, Specialization, User,
-    Booking,
+    Booking, Customer, InstructorCustomer,
 )
 from ..catalog_sync import ensure_official_price_catalog
 from ..official_price import OFFICIAL_SERVICE_SPECS
@@ -221,7 +221,6 @@ class InstructorAssignments(BaseModel):
 def update_instructor(
     iid: int,
     payload: InstructorIn,
-    assignments: Optional[InstructorAssignments] = None,
     user: User = Depends(require_manager),
     db: Session = Depends(get_db),
 ):
@@ -230,17 +229,6 @@ def update_instructor(
         raise HTTPException(404, "Not found")
     for k, v in payload.model_dump().items():
         setattr(i, k, v)
-
-    if assignments is not None:
-        db.execute(delete(InstructorSpecialization).where(
-            InstructorSpecialization.instructor_id == iid
-        ))
-        for sp_id in assignments.specialization_ids:
-            db.add(InstructorSpecialization(instructor_id=iid, specialization_id=sp_id))
-        db.execute(delete(InstructorResource).where(InstructorResource.instructor_id == iid))
-        for r_id in assignments.resource_ids:
-            db.add(InstructorResource(instructor_id=iid, resource_id=r_id))
-
     audit.log(db, user, AuditAction.UPDATE.value, "instructor", iid,
               summary=f"Обновлён тренер: {i.name}")
     db.commit()
@@ -399,3 +387,74 @@ def reset_services_from_price(
         "updated": stats["updated"],
         "archived": stats["archived"],
     }
+
+
+# ── Instructor ↔ Customer M2M ─────────────────────────────────────────────────
+
+class CustomerBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    phone: str = ""
+    email: str = ""
+    notes: str = ""
+
+
+@router.get("/instructors/{iid}/customers", response_model=List[CustomerBrief])
+def list_instructor_customers(
+    iid: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Trainers can only view their own client list; managers/admins see any."""
+    from ..enums import UserRole
+    if user.role == UserRole.INSTRUCTOR.value:
+        if user.instructor_id != iid:
+            raise HTTPException(403, "Доступ запрещён")
+    rows = db.execute(
+        select(Customer)
+        .join(InstructorCustomer, InstructorCustomer.customer_id == Customer.id)
+        .where(InstructorCustomer.instructor_id == iid)
+        .order_by(Customer.name)
+    ).scalars().all()
+    return [CustomerBrief.model_validate(c) for c in rows]
+
+
+@router.post("/instructors/{iid}/customers/{customer_id}", response_model=dict)
+def link_instructor_customer(
+    iid: int,
+    customer_id: int,
+    user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    if not db.get(Instructor, iid):
+        raise HTTPException(404, "Тренер не найден")
+    if not db.get(Customer, customer_id):
+        raise HTTPException(404, "Клиент не найден")
+    existing = db.execute(
+        select(InstructorCustomer).where(
+            InstructorCustomer.instructor_id == iid,
+            InstructorCustomer.customer_id == customer_id,
+        )
+    ).scalar_one_or_none()
+    if not existing:
+        db.add(InstructorCustomer(instructor_id=iid, customer_id=customer_id))
+        db.commit()
+    return {"ok": True}
+
+
+@router.delete("/instructors/{iid}/customers/{customer_id}", response_model=dict)
+def unlink_instructor_customer(
+    iid: int,
+    customer_id: int,
+    user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    db.execute(
+        delete(InstructorCustomer).where(
+            InstructorCustomer.instructor_id == iid,
+            InstructorCustomer.customer_id == customer_id,
+        )
+    )
+    db.commit()
+    return {"ok": True}

@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Users, Tag, GraduationCap, List, LogOut,
   BarChart3, Crown, ShieldCheck, History, Settings as SettingsIcon,
-  Search, Ticket, CalendarClock, Menu, X,
+  Search, Ticket, CalendarClock, CalendarDays, Menu, X, Dumbbell, ShoppingBag,
 } from "lucide-react";
 import { useLogout, useMe } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ const mainNavFull: Entry[] = [
   { to: "/", label: "Дашборд", icon: LayoutDashboard, end: true },
   { to: "/analytics", label: "Аналитика", icon: BarChart3 },
   { to: "/bookings", label: "Брони", icon: List },
+  { to: "/trainings", label: "Тренировки", icon: Dumbbell },
   { to: "/trainers-schedule", label: "График тренеров", icon: CalendarClock },
 ];
 
@@ -26,6 +27,7 @@ const catalogNav: Entry[] = [
   { to: "/catalog", label: "Услуги", icon: Tag },
   { to: "/instructors", label: "Тренеры", icon: GraduationCap },
   { to: "/memberships", label: "Абонементы", icon: Crown },
+  { to: "/membership-sales", label: "Продажи абонементов", icon: ShoppingBag },
   { to: "/coupons", label: "Промокоды", icon: Ticket },
 ];
 
@@ -33,6 +35,10 @@ const adminNav: Entry[] = [
   { to: "/staff", label: "Сотрудники", icon: ShieldCheck, adminOnly: true },
   { to: "/audit", label: "Журнал", icon: History, adminOnly: true },
   { to: "/settings", label: "Настройки", icon: SettingsIcon, adminOnly: true },
+];
+
+const eventsNav: Entry[] = [
+  { to: "/events", label: "Календарь мероприятий", icon: CalendarDays, adminOnly: true },
 ];
 
 function roleLabel(role?: string) {
@@ -63,12 +69,14 @@ export default function Layout() {
     ? [
       { to: "/", label: "Дашборд", icon: LayoutDashboard, end: true },
       { to: "/bookings", label: "Мои брони", icon: List },
+      { to: "/trainings", label: "Мои тренировки", icon: Dumbbell },
       { to: "/my-schedule", label: "Мой график", icon: CalendarClock },
     ]
     : isStaff
       ? [
         { to: "/", label: "Дашборд", icon: LayoutDashboard, end: true },
         { to: "/bookings", label: "Брони", icon: List },
+        { to: "/trainings", label: "Тренировки", icon: Dumbbell },
         { to: "/trainers-schedule", label: "График тренеров", icon: CalendarClock },
       ]
       : mainNavFull;
@@ -209,6 +217,7 @@ function Sidebar({
       <nav className="py-3 overflow-y-auto" data-testid="sidebar-nav">
         <Section label="" items={mainNav} onNavigate={onNavigate} />
         <Section label="Справочники" items={catalogMenu} onNavigate={onNavigate} />
+        {isAdmin && <Section label="Мероприятия" items={eventsNav} onNavigate={onNavigate} />}
         {isAdmin && <Section label="Администрирование" items={adminNav} onNavigate={onNavigate} />}
       </nav>
 

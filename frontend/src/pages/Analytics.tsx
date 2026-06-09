@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  TrendingUp, TrendingDown, Wallet, MapPin, Crown, Sparkles,
+  TrendingUp, TrendingDown, Wallet, Crown, Sparkles,
   ChevronDown, ChevronUp, Clock, Users,
 } from "lucide-react";
 import { api, type BusinessSummary, type DailyPoint } from "@/lib/api";
@@ -130,13 +130,7 @@ function TopCards({ d }: { d: BusinessSummary }) {
         }
         deltaPositive={delta == null ? undefined : delta >= 0}
       />
-      <BigCard
-        tone="gold"
-        icon={MapPin}
-        label="Самая загруженная зона"
-        value={d.top_zone_name}
-        sub={`${d.top_zone_guests} гостей за 30 дней`}
-      />
+
       <BigCard
         tone="blue"
         icon={Sparkles}

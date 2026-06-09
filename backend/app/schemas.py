@@ -81,6 +81,18 @@ class CustomerWithStatsOut(CustomerOut):
     visits: int = 0
     total_spent_kopecks: int = 0
     active_memberships: List[str] = []
+    created_by_name: Optional[str] = None
+
+
+class CustomerVisitOut(BaseModel):
+    booking_id: int
+    date: datetime
+    service_name: Optional[str] = None
+    instructor_name: Optional[str] = None
+    resource_name: Optional[str] = None
+    guests: int = 1
+    total_kopecks: int = 0
+    status: str = ""
 
 
 # ── Service / Instructor ──────────────────────────────────────────────
@@ -154,11 +166,22 @@ class BookingOut(BaseModel):
     comment: str
 
 
+class BookingItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    kind: str
+    name: str
+    quantity: int
+    unit_price_kopecks: int
+    total_kopecks: int
+
+
 class BookingRichOut(BookingOut):
     customer_name: Optional[str] = None
     service_name: Optional[str] = None
     resource_name: Optional[str] = None
     instructor_name: Optional[str] = None
+    items: List["BookingItemOut"] = []
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────

@@ -53,6 +53,9 @@ export function useRealtime() {
               "business-analytics", "audit",
             ]);
             break;
+          case "events":
+            inval(["events", "audit"]);
+            break;
           default:
             // eslint-disable-next-line no-console
             console.debug("[realtime] unknown event:", payload);

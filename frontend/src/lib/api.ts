@@ -50,6 +50,18 @@ export type Customer = {
   total_spent_kopecks?: number;
   /** short labels of абонементы active right now, e.g. ["30 дней · 5/8"] */
   active_memberships?: string[];
+  created_by_name?: string | null;
+};
+
+export type CustomerVisit = {
+  booking_id: number;
+  date: string;
+  service_name: string | null;
+  instructor_name: string | null;
+  resource_name: string | null;
+  guests: number;
+  total_kopecks: number;
+  status: string;
 };
 
 export type Coupon = {
@@ -109,6 +121,15 @@ export type Instructor = {
   hourly_payout_kopecks?: number;
 };
 
+export type BookingItem = {
+  id: number;
+  kind: string;
+  name: string;
+  quantity: number;
+  unit_price_kopecks: number;
+  total_kopecks: number;
+};
+
 export type Booking = {
   id: number;
   resource_id: number | null;
@@ -128,6 +149,7 @@ export type Booking = {
   service_name?: string | null;
   resource_name?: string | null;
   instructor_name?: string | null;
+  items?: BookingItem[];
 };
 
 export type BookingCategory =
@@ -374,6 +396,41 @@ export type CalendarEvent = {
   guests: number;
 };
 
+export type ClubEvent = {
+  id: number;
+  title: string;
+  category: string;
+  starts_at: string;
+  ends_at: string;
+  all_day: boolean;
+  location: string;
+  description: string;
+  capacity: number | null;
+  color: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+  created_by_id?: number | null;
+};
+
+export type ActiveMembership = {
+  id: number;
+  customer_id: number;
+  customer_name: string;
+  customer_phone: string | null;
+  plan_id: number;
+  plan_name: string;
+  purchased_at: string;
+  starts_on: string;
+  ends_on: string;
+  active: boolean;
+  trainings_used: number;
+  plan_covers_training: boolean;
+  plan_max_trainings: number;
+  plan_discount_percent: number;
+  plan_covers_all_services: boolean;
+};
+
 export type MembershipPlan = {
   id: number;
   name: string;
@@ -385,6 +442,7 @@ export type MembershipPlan = {
   description: string;
   covers_training: boolean;
   max_trainings: number;
+  covers_all_services: boolean;
   active: boolean;
 };
 
@@ -402,6 +460,25 @@ export type CustomerMembership = {
   plan_discount_percent: number;
   plan_covers_training: boolean;
   plan_max_trainings: number;
+  plan_covers_all_services: boolean;
+};
+
+export type MembershipSale = {
+  id: number;
+  customer_id: number;
+  customer_name: string;
+  customer_phone: string | null;
+  plan_id: number;
+  plan_name: string;
+  plan_price_kopecks: number;
+  plan_covers_training: boolean;
+  plan_covers_all_services: boolean;
+  plan_max_trainings: number;
+  purchased_at: string;
+  starts_on: string;
+  ends_on: string;
+  active: boolean;
+  trainings_used: number;
 };
 
 export type Specialization = {
@@ -497,6 +574,8 @@ export const api = {
     request<Booking>("/bookings/scenario", { method: "POST", body: JSON.stringify(body) }),
   transition: (id: number, to: string, reason = "") =>
     request<Booking>(`/bookings/${id}/transition?to=${to}&reason=${encodeURIComponent(reason)}`, { method: "POST" }),
+  applyMembership: (id: number) =>
+    request<Booking>(`/bookings/${id}/apply-membership`, { method: "POST" }),
   patchBooking: (id: number, body: Partial<Booking>) =>
     request<Booking>(`/bookings/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   editBooking: (id: number, body: {
@@ -548,6 +627,8 @@ export const api = {
     request<Customer>(`/customers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteCustomer: (id: number) =>
     request<void>(`/customers/${id}`, { method: "DELETE" }),
+  customerVisits: (id: number) =>
+    request<CustomerVisit[]>(`/customers/${id}/visits`),
 
   // catalog
   services: () => request<Service[]>("/catalog/services"),
@@ -570,6 +651,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // club events calendar (admin-only)
+  events: (params: { from?: string; to?: string; include_inactive?: boolean } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.include_inactive) qs.set("include_inactive", "true");
+    return request<ClubEvent[]>(`/events${qs.toString() ? "?" + qs : ""}`);
+  },
+  createEvent: (body: Partial<ClubEvent>) =>
+    request<ClubEvent>("/events", { method: "POST", body: JSON.stringify(body) }),
+  updateEvent: (id: number, body: Partial<ClubEvent>) =>
+    request<ClubEvent>(`/events/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteEvent: (id: number) =>
+    request<void>(`/events/${id}`, { method: "DELETE" }),
 
   // admin
   staff: () => request<Staff[]>("/admin/staff"),
@@ -600,6 +696,7 @@ export const api = {
 
   // memberships
   memberships: () => request<MembershipPlan[]>("/memberships"),
+  activeMemberships: () => request<ActiveMembership[]>("/memberships/active"),
   createMembership: (body: Partial<MembershipPlan>) =>
     request<MembershipPlan>("/memberships", { method: "POST", body: JSON.stringify(body) }),
   updateMembership: (id: number, body: Partial<MembershipPlan>) =>
@@ -652,6 +749,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ service_id: serviceId, price_kopecks: priceKopecks }),
     }),
+  instructorCustomers: (id: number) =>
+    request<Customer[]>(`/catalog-admin/instructors/${id}/customers`),
+  linkInstructorCustomer: (instructorId: number, customerId: number) =>
+    request<{ ok: boolean }>(`/catalog-admin/instructors/${instructorId}/customers/${customerId}`, { method: "POST" }),
+  unlinkInstructorCustomer: (instructorId: number, customerId: number) =>
+    request<{ ok: boolean }>(`/catalog-admin/instructors/${instructorId}/customers/${customerId}`, { method: "DELETE" }),
 
   // coupons
   coupons: () => request<Coupon[]>("/coupons"),
@@ -687,6 +790,13 @@ export const api = {
     }),
   revokeMembership: (mid: number) =>
     request<void>(`/memberships/customer-membership/${mid}`, { method: "DELETE" }),
+  membershipSales: (params?: { from_?: string; to_?: string; customer_id?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.from_) qs.set("from_", params.from_);
+    if (params?.to_) qs.set("to_", params.to_);
+    if (params?.customer_id !== undefined) qs.set("customer_id", String(params.customer_id));
+    return request<MembershipSale[]>(`/memberships/sales${qs.toString() ? "?" + qs : ""}`);
+  },
 
   // demo
   seedDemo: (count = 80) =>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   X, AlertCircle, CheckCircle2, Calculator, Loader2,
-  MapPin, GraduationCap, Users as UsersIcon, Clock, Ticket, Plus,
+  MapPin, GraduationCap, Users as UsersIcon, Clock, Ticket,
 } from "lucide-react";
 import {
   api,
@@ -49,6 +49,16 @@ function weekdayFromISODate(date: string) {
 function isWeekendISODate(date: string) {
   const weekday = weekdayFromISODate(date);
   return weekday === 5 || weekday === 6;
+}
+
+function resolveCourseUnitPrice(code: string, date: string): number | null {
+  if (code !== "course_9" && code !== "course_18") return null;
+  const weekday = weekdayFromISODate(date);
+  if (weekday === null) return null;
+  const isMonTue = weekday <= 1;
+  const isWeekend = weekday >= 5;
+  if (code === "course_9") return isMonTue ? 400000 : isWeekend ? 700000 : 500000;
+  return isMonTue ? 600000 : isWeekend ? 900000 : 700000;
 }
 
 function formatDate(value?: string | null) {
@@ -98,7 +108,6 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
   const qc = useQueryClient();
   const { data: me } = useMe();
   const isInstructor = me?.role === "instructor";
-  const canAssignMembership = me?.role === "admin" || me?.role === "manager" || me?.role === "staff";
   const lockedTrainerId = isInstructor ? (me?.instructor_id ?? null) : null;
 
   // ── form state
@@ -127,10 +136,7 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
   const [couponCode, setCouponCode] = useState("");
   const [membershipId, setMembershipId] = useState<number | null>(null);
   const [membershipPurchaseId, setMembershipPurchaseId] = useState<number | null>(null);
-  const [showMembershipAssign, setShowMembershipAssign] = useState(false);
-  const [assignPlanId, setAssignPlanId] = useState<number | null>(null);
-  const [assignStartOn, setAssignStartOn] = useState(startDate);
-  const [assignDurationOverride, setAssignDurationOverride] = useState<number | null>(null);
+  const [membershipManuallyCleared, setMembershipManuallyCleared] = useState(false);
 
   // Если login/роль пришли позже — подстрахуемся, чтобы у тренера всегда был его id.
   useEffect(() => {
@@ -145,7 +151,6 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
   const { data: catalog } = useQuery({ queryKey: ["scenario-catalog"], queryFn: api.scenarioCatalog });
   const { data: instructors } = useQuery({ queryKey: ["instructors"], queryFn: api.instructors });
   const { data: customers } = useQuery({ queryKey: ["customers"], queryFn: () => api.customers() });
-  const { data: membershipPlans } = useQuery({ queryKey: ["memberships"], queryFn: api.memberships });
 
   // Active memberships for the selected customer (for tariff discount)
   const { data: customerMemberships } = useQuery({
@@ -159,13 +164,9 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
     ),
     [customerMemberships, startDate]
   );
-  const activeMembershipPlans = useMemo(
-    () => (membershipPlans || []).filter((p) => p.active),
-    [membershipPlans]
-  );
-  const selectedAssignPlan = useMemo(
-    () => activeMembershipPlans.find((p) => p.id === assignPlanId) || null,
-    [activeMembershipPlans, assignPlanId]
+  const selectedMembership = useMemo(
+    () => activeMemberships.find((m) => m.id === membershipId) || null,
+    [activeMemberships, membershipId]
   );
   const instructorGroups = useMemo(() => {
     const list = instructors || [];
@@ -180,16 +181,21 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
   useEffect(() => {
     setMembershipId(null);
     setMembershipPurchaseId(null);
-    setShowMembershipAssign(false);
+    setMembershipManuallyCleared(false);
   }, [customerId]);
 
-  useEffect(() => { setAssignStartOn(startDate); }, [startDate]);
-
+  // Auto-select training membership when training is toggled on and client has one.
+  // Uses full activeMemberships array so switching between customers with equal
+  // membership counts also triggers (length alone wouldn't change).
+  // Skips auto-selection if the staff manually cleared the membership.
   useEffect(() => {
-    if (!assignPlanId && activeMembershipPlans.length > 0) {
-      setAssignPlanId(activeMembershipPlans[0].id);
-    }
-  }, [activeMembershipPlans, assignPlanId]);
+    if (!hasTraining || !activeMemberships.length || membershipId || membershipManuallyCleared) return;
+    const trainingMembership = activeMemberships.find(
+      (m) => m.plan_covers_training && (m.plan_max_trainings === 0 || m.trainings_used < m.plan_max_trainings)
+    );
+    if (trainingMembership) setMembershipId(trainingMembership.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasTraining, activeMemberships, membershipManuallyCleared]);
 
   const OPEN_MIN = 8 * 60;
   const CLOSE_MIN = 22 * 60;
@@ -326,25 +332,6 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
     },
   });
 
-  const assignMembership = useMutation({
-    mutationFn: async () => {
-      if (!customerId || !assignPlanId) throw new Error("Выберите клиента и тариф абонемента");
-      return api.assignMembership(customerId, {
-        plan_id: assignPlanId,
-        starts_on: assignStartOn,
-        duration_days_override: assignDurationOverride,
-      });
-    },
-    onSuccess: (m) => {
-      qc.invalidateQueries({ queryKey: ["customer-memberships", customerId] });
-      qc.invalidateQueries({ queryKey: ["customers"] });
-      setMembershipId(m.id);
-      setMembershipPurchaseId(m.id);
-      setShowMembershipAssign(false);
-      setAssignDurationOverride(null);
-    },
-  });
-
   // ── save
   const save = useMutation({
     mutationFn: () => api.createScenarioBooking(scenarioBody),
@@ -359,7 +346,7 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
     },
   });
 
-  const canSave = quote?.ok && (customerId != null) && !save.isPending && !invalidTimeRange;
+  const canSave = quote?.ok && (customerId != null) && !save.isPending && !invalidTimeRange && !quoteQ.isFetching;
 
   return (
     <div className="modal-overlay sm:items-start" onClick={onClose}>
@@ -415,38 +402,198 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
             </div>
           </Section>
 
-          {/* 2. Категория */}
-          <Section title="2. Категория бронирования" icon={MapPin}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-              {(catalog?.categories || []).map((c) => (
-                <button
-                  key={c.code}
-                  type="button"
-                  onClick={() => setCategory(c.code)}
-                  className={cn(
-                    "text-left rounded-xl border-2 p-4 transition",
-                    category === c.code
-                      ? "border-brand bg-brand/5 ring-1 ring-brand/20"
-                      : "border-stone-200 hover:border-brand/40 bg-white"
+          {/* 2. Тренировка */}
+          <Section title="2. Нужна ли тренировка?" icon={GraduationCap}>
+            {isInstructor ? (
+              <div className="mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800">
+                Вы создаёте бронь с тренировкой у себя — выберите тип ниже.
+              </div>
+            ) : (
+              <div className="flex gap-2 mb-3">
+                <YesNoChip active={!hasTraining} onClick={() => setHasTraining(false)}>Нет</YesNoChip>
+                <YesNoChip active={hasTraining} onClick={() => setHasTraining(true)}>Да</YesNoChip>
+              </div>
+            )}
+
+            {hasTraining && (
+              <div className="space-y-4 mb-4">
+                <div>
+                  <div className="label">Тип тренировки</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {(catalog?.trainings || []).map((t) => {
+                      const price = t.prices.find((p) => p.guests === guests)?.price_kopecks ?? null;
+                      return (
+                        <button
+                          key={t.type}
+                          type="button"
+                          onClick={() => setTrainingType(t.type)}
+                          className={cn(
+                            "text-left rounded-lg border-2 p-3 transition",
+                            trainingType === t.type
+                              ? "border-brand bg-brand/5"
+                              : "border-stone-200 hover:border-brand/40 bg-white"
+                          )}
+                        >
+                          <div className="font-semibold text-sm">{t.label}</div>
+                          <div className="text-lg font-bold text-brand mt-1">
+                            {price != null ? formatRub(price) : "—"}
+                          </div>
+                          <div className="text-[11px] text-stone-400">для {guests} {guests === 1 ? "гостя" : "гостей"}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label">Тренер</label>
+                  {isInstructor ? (
+                    <div
+                      className="input bg-stone-50 text-stone-700 cursor-not-allowed select-none"
+                      data-testid="trainer-locked-self"
+                      title="Тренер может создавать брони только на себя"
+                    >
+                      Вы — {me?.name || "тренер"}
+                    </div>
+                  ) : (
+                    <select
+                      className="input"
+                      value={trainerId ?? ""}
+                      onChange={(e) => setTrainerId(e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">— выберите тренера —</option>
+                      {instructorGroups.map((group) => (
+                        <optgroup key={group.key} label={group.label}>
+                          {group.items.map((i) => (
+                            <option key={i.id} value={i.id}>{i.name} · {i.specialization}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Клиент — всегда под секцией тренировки */}
+            <div>
+              <div className="label mb-1">Клиент</div>
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 mb-2">
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="Поиск клиента по имени или телефону"
+                  value={customerQuery}
+                  onChange={(e) => { setCustomerQuery(e.target.value); setCustomerId(null); }}
+                />
+                <button
+                  type="button"
+                  className="btn-ghost border border-stone-300 rounded-lg px-3 py-2 text-sm"
+                  onClick={() => setShowQuickCreate((v) => !v)}
                 >
-                  <div className="text-sm font-semibold text-stone-900">{c.short}</div>
-                  <div className="text-xs text-stone-500 mt-0.5">{c.detail}</div>
-                  <div className="mt-3 text-xl font-bold text-brand">
-                    {(c.code === "range" || c.code === "course_9" || c.code === "course_18") && "от "}
-                    {formatRub(c.base_price_kopecks)}
-                    {c.basket_unit && (
-                      <span className="text-xs text-stone-400 font-normal">
-                        /{c.basket_unit_label || "ед."}
-                      </span>
-                    )}
-                    {c.per_guest && <span className="text-xs text-stone-400 font-normal"> /гость</span>}
-                  </div>
-                  <div className="text-[11px] text-stone-400 mt-1">
-                    вместимость: {c.pool_capacity} {c.code === "range" ? ruPlatformWord(c.pool_capacity) : c.pool_capacity === 1 ? "слот" : "мест"}
-                  </div>
+                  {showQuickCreate ? "Отмена" : "+ Быстро создать"}
                 </button>
-              ))}
+              </div>
+              {showQuickCreate ? (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                    <input
+                      className="input"
+                      placeholder="ФИО гостя"
+                      value={quickName}
+                      onChange={(e) => setQuickName(e.target.value)}
+                    />
+                    <input
+                      className="input"
+                      inputMode="tel"
+                      placeholder="+7 (___) ___-__-__ (необязательно)"
+                      value={quickPhone}
+                      onChange={(e) => {
+                        const digits = extractRuDigits(e.target.value);
+                        setQuickPhone(digits ? formatRuPhone(digits) : "");
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={!quickName.trim() || createCustomer.isPending}
+                      onClick={() => createCustomer.mutate()}
+                      className="btn-primary whitespace-nowrap"
+                    >
+                      Создать
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="max-h-48 overflow-auto border border-stone-200 rounded-lg divide-y divide-stone-100">
+                  {filteredCustomers.length === 0 && (
+                    <div className="p-3 text-sm text-stone-400 text-center">Нет клиентов</div>
+                  )}
+                  {filteredCustomers.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => { setCustomerId(c.id); setCustomerQuery(c.name); }}
+                      className={cn(
+                        "w-full text-left px-3 py-2 text-sm hover:bg-brand/5 transition",
+                        customerId === c.id && "bg-brand/10 text-brand"
+                      )}
+                    >
+                      <div className="font-medium">{c.name}</div>
+                      {c.phone && <div className="text-xs text-stone-500">{c.phone}</div>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Section>
+
+          {/* 3. Категория */}
+          <Section title="3. Категория бронирования" icon={MapPin}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              {(catalog?.categories || []).map((c) => {
+                const isCourseCard = c.code === "course_9" || c.code === "course_18";
+                let cardPrice = c.base_price_kopecks;
+                let cardShowFrom = c.code === "range" || c.code === "course_9" || c.code === "course_18";
+                if (isCourseCard) {
+                  const fromQuote = c.code === category && quote && !hasTraining && quote.base_price_kopecks > 0;
+                  if (fromQuote) {
+                    cardPrice = Math.round(quote.base_price_kopecks / Math.max(1, guests));
+                    cardShowFrom = false;
+                  } else {
+                    const resolved = resolveCourseUnitPrice(c.code, startDate);
+                    if (resolved !== null) { cardPrice = resolved; cardShowFrom = false; }
+                  }
+                }
+                return (
+                  <button
+                    key={c.code}
+                    type="button"
+                    onClick={() => setCategory(c.code)}
+                    className={cn(
+                      "text-left rounded-xl border-2 p-4 transition",
+                      category === c.code
+                        ? "border-brand bg-brand/5 ring-1 ring-brand/20"
+                        : "border-stone-200 hover:border-brand/40 bg-white"
+                    )}
+                  >
+                    <div className="text-sm font-semibold text-stone-900">{c.short}</div>
+                    <div className="text-xs text-stone-500 mt-0.5">{c.detail}</div>
+                    <div className="mt-3 text-xl font-bold text-brand">
+                      {cardShowFrom && "от "}
+                      {formatRub(cardPrice)}
+                      {c.basket_unit && (
+                        <span className="text-xs text-stone-400 font-normal">
+                          /{c.basket_unit_label || "ед."}
+                        </span>
+                      )}
+                      {c.per_guest && <span className="text-xs text-stone-400 font-normal"> /гость</span>}
+                    </div>
+                    <div className="text-[11px] text-stone-400 mt-1">
+                      вместимость: {c.pool_capacity} {c.code === "range" ? ruPlatformWord(c.pool_capacity) : c.pool_capacity === 1 ? "слот" : "мест"}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
             {quote?.category_short && (
               <div className="mt-3 text-sm text-stone-600 bg-stone-50 border border-stone-200 rounded-lg px-3 py-2">
@@ -456,8 +603,8 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
             )}
           </Section>
 
-          {/* 3. Гости */}
-          <Section title="3. Количество гостей" icon={UsersIcon}>
+          {/* 4. Гости */}
+          <Section title="4. Количество гостей" icon={UsersIcon}>
             <div className="flex items-center gap-2 flex-wrap">
               {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => {
                 const disabled = n > maxGuests;
@@ -520,9 +667,9 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
             )}
           </Section>
 
-          {/* 3b. Unit count — Range platforms */}
+          {/* 4b. Unit count — Range platforms */}
           {usesBaskets && (
-            <Section title={isRangeCategory ? "3a. Количество помостов" : "3a. Количество"} icon={UsersIcon}>
+            <Section title={isRangeCategory ? "4a. Количество помостов" : "4a. Количество"} icon={UsersIcon}>
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="inline-flex items-center bg-white border border-stone-300 rounded-lg overflow-hidden">
                   <button
@@ -564,7 +711,7 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
           )}
 
           {supportsAddons && (
-            <Section title={usesBaskets ? "3b. Доп. услуги" : "3a. Доп. услуги"} icon={Ticket}>
+            <Section title={usesBaskets ? "4b. Доп. услуги" : "4a. Доп. услуги"} icon={Ticket}>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <AddonStepper label="Клюшка" price={50000} value={addonClubs} onChange={setAddonClubs} max={100} />
                 {supportsBallBasketAddon && (
@@ -582,156 +729,8 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
             </Section>
           )}
 
-          {/* 4. Клиент */}
-          <Section title="4. Клиент">
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 mb-2">
-              <input
-                type="text"
-                className="input"
-                placeholder="Поиск клиента по имени или телефону"
-                value={customerQuery}
-                onChange={(e) => { setCustomerQuery(e.target.value); setCustomerId(null); }}
-              />
-              <button
-                type="button"
-                className="btn-ghost border border-stone-300 rounded-lg px-3 py-2 text-sm"
-                onClick={() => setShowQuickCreate((v) => !v)}
-              >
-                {showQuickCreate ? "Отмена" : "+ Быстро создать"}
-              </button>
-            </div>
-
-            {showQuickCreate ? (
-              <div className="space-y-2">
-                <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
-                  <input
-                    className="input"
-                    placeholder="ФИО гостя"
-                    value={quickName}
-                    onChange={(e) => setQuickName(e.target.value)}
-                  />
-                  <input
-                    className="input"
-                    inputMode="tel"
-                    placeholder="+7 (___) ___-__-__ (необязательно)"
-                    value={quickPhone}
-                    onChange={(e) => {
-                      const digits = extractRuDigits(e.target.value);
-                      setQuickPhone(digits ? formatRuPhone(digits) : "");
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={!quickName.trim() || createCustomer.isPending}
-                    onClick={() => createCustomer.mutate()}
-                    className="btn-primary whitespace-nowrap"
-                  >
-                    Создать
-                  </button>
-                </div>
-                <div className="text-xs text-stone-500">
-                  Телефон можно не указывать. Формат российский: +7 (999) 123-45-67.
-                </div>
-              </div>
-            ) : (
-              <div className="max-h-48 overflow-auto border border-stone-200 rounded-lg divide-y divide-stone-100">
-                {filteredCustomers.length === 0 && (
-                  <div className="p-3 text-sm text-stone-400 text-center">Нет клиентов</div>
-                )}
-                {filteredCustomers.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => { setCustomerId(c.id); setCustomerQuery(c.name); }}
-                    className={cn(
-                      "w-full text-left px-3 py-2 text-sm hover:bg-brand/5 transition",
-                      customerId === c.id && "bg-brand/10 text-brand"
-                    )}
-                  >
-                    <div className="font-medium">{c.name}</div>
-                    {c.phone && <div className="text-xs text-stone-500">{c.phone}</div>}
-                  </button>
-                ))}
-              </div>
-            )}
-          </Section>
-
-          {/* 5. Тренировка */}
-          <Section title="5. Нужна ли тренировка?" icon={GraduationCap}>
-            {isInstructor ? (
-              <div className="mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800">
-                Вы создаёте бронь с тренировкой у себя — выберите тип ниже.
-              </div>
-            ) : (
-              <div className="flex gap-2 mb-3">
-                <YesNoChip active={!hasTraining} onClick={() => setHasTraining(false)}>Нет</YesNoChip>
-                <YesNoChip active={hasTraining} onClick={() => setHasTraining(true)}>Да</YesNoChip>
-              </div>
-            )}
-
-            {hasTraining && (
-              <div className="space-y-4">
-                <div>
-                  <div className="label">Тип тренировки</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    {(catalog?.trainings || []).map((t) => {
-                      const price = t.prices.find((p) => p.guests === guests)?.price_kopecks ?? null;
-                      return (
-                        <button
-                          key={t.type}
-                          type="button"
-                          onClick={() => setTrainingType(t.type)}
-                          className={cn(
-                            "text-left rounded-lg border-2 p-3 transition",
-                            trainingType === t.type
-                              ? "border-brand bg-brand/5"
-                              : "border-stone-200 hover:border-brand/40 bg-white"
-                          )}
-                        >
-                          <div className="font-semibold text-sm">{t.label}</div>
-                          <div className="text-lg font-bold text-brand mt-1">
-                            {price != null ? formatRub(price) : "—"}
-                          </div>
-                          <div className="text-[11px] text-stone-400">для {guests} {guests === 1 ? "гостя" : "гостей"}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="label">Тренер</label>
-                  {isInstructor ? (
-                    <div
-                      className="input bg-stone-50 text-stone-700 cursor-not-allowed select-none"
-                      data-testid="trainer-locked-self"
-                      title="Тренер может создавать брони только на себя"
-                    >
-                      Вы — {me?.name || "тренер"}
-                    </div>
-                  ) : (
-                    <select
-                      className="input"
-                      value={trainerId ?? ""}
-                      onChange={(e) => setTrainerId(e.target.value ? Number(e.target.value) : null)}
-                    >
-                      <option value="">— выберите тренера —</option>
-                      {instructorGroups.map((group) => (
-                        <optgroup key={group.key} label={group.label}>
-                          {group.items.map((i) => (
-                            <option key={i.id} value={i.id}>{i.name} · {i.specialization}</option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              </div>
-            )}
-          </Section>
-
-          {/* 6. Промокод и абонемент */}
-          <Section title="6. Промокод или абонемент" icon={Ticket}>
+          {/* 5. Промокод и абонемент */}
+          <Section title="5. Промокод или абонемент" icon={Ticket}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="label">Промокод</label>
@@ -757,8 +756,10 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
                   className="input"
                   value={membershipId ?? ""}
                   onChange={(e) => {
-                    setMembershipId(e.target.value ? Number(e.target.value) : null);
+                    const val = e.target.value ? Number(e.target.value) : null;
+                    setMembershipId(val);
                     setMembershipPurchaseId(null);
+                    if (!val) setMembershipManuallyCleared(true);
                   }}
                   disabled={!customerId || activeMemberships.length === 0}
                 >
@@ -789,92 +790,45 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
                     );
                   })}
                 </select>
-                {customerId && canAssignMembership ? (
+                {selectedMembership && (selectedMembership.plan_covers_training || selectedMembership.plan_covers_all_services) && (
+                  <div className="mt-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 size={15} className="shrink-0 text-emerald-600" />
+                      <span className="font-medium">
+                        {selectedMembership.plan_covers_all_services ? "Поле + тренировка покрыты абонементом" : "Тренировка покрыта абонементом"}
+                      </span>
+                    </div>
+                    {selectedMembership.plan_max_trainings > 0 ? (
+                      <div className="mt-1 ml-[23px] text-emerald-700">
+                        Осталось <strong>{Math.max(0, selectedMembership.plan_max_trainings - selectedMembership.trainings_used)}</strong> из {selectedMembership.plan_max_trainings} занятий бесплатных
+                        {" · "}до {selectedMembership.ends_on.slice(0, 10).split("-").reverse().join(".")}
+                      </div>
+                    ) : (
+                      <div className="mt-1 ml-[23px] text-emerald-700">
+                        Безлимитные занятия · до {selectedMembership.ends_on.slice(0, 10).split("-").reverse().join(".")}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {membershipId !== null && selectedMembership !== null && (
                   <button
                     type="button"
-                    className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-brand hover:text-brand-dark"
-                    onClick={() => setShowMembershipAssign((v) => !v)}
+                    className="mt-1.5 text-xs text-stone-400 hover:text-red-500 transition"
+                    onClick={() => {
+                      setMembershipId(null);
+                      setMembershipPurchaseId(null);
+                      setMembershipManuallyCleared(true);
+                    }}
                   >
-                    <Plus size={15} />
-                    {activeMemberships.length === 0 ? "Выдать абонемент клиенту" : "Выдать ещё один абонемент"}
+                    × Не списывать абонемент
                   </button>
-                ) : !customerId ? (
-                  <div className="text-xs text-stone-500 mt-2">Чтобы выдать абонемент, сначала выберите клиента.</div>
-                ) : (
-                  <div className="text-xs text-stone-500 mt-2">Выдача абонемента доступна администратору, менеджеру или ресепшену.</div>
                 )}
               </div>
             </div>
-
-            {showMembershipAssign && customerId && canAssignMembership && (
-              <div className="mt-3 rounded-lg border border-brand/20 bg-brand/5 p-3">
-                <div className="grid grid-cols-1 sm:grid-cols-[1fr_150px_120px_auto] gap-2 items-end">
-                  <div>
-                    <label className="label">Тариф абонемента</label>
-                    <select
-                      className="input"
-                      value={assignPlanId ?? ""}
-                      onChange={(e) => setAssignPlanId(e.target.value ? Number(e.target.value) : null)}
-                      disabled={activeMembershipPlans.length === 0}
-                    >
-                      {activeMembershipPlans.length === 0 ? (
-                        <option value="">Нет активных тарифов</option>
-                      ) : (
-                        activeMembershipPlans.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} · {formatRub(p.price_kopecks)} · {p.duration_days} дн.
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label">Дата продажи / начало</label>
-                    <input
-                      type="date"
-                      className="input"
-                      value={assignStartOn}
-                      onChange={(e) => setAssignStartOn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="label">Дней</label>
-                    <input
-                      type="number"
-                      min={1}
-                      className="input"
-                      placeholder={selectedAssignPlan ? String(selectedAssignPlan.duration_days) : "30"}
-                      value={assignDurationOverride ?? ""}
-                      onChange={(e) => setAssignDurationOverride(e.target.value ? Number(e.target.value) : null)}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className="btn-primary whitespace-nowrap"
-                    disabled={!assignPlanId || activeMembershipPlans.length === 0 || assignMembership.isPending}
-                    onClick={() => assignMembership.mutate()}
-                  >
-                    {assignMembership.isPending ? "…" : "Выдать"}
-                  </button>
-                </div>
-                {selectedAssignPlan && (
-                  <div className="text-xs text-stone-600 mt-2">
-                    Срок считается от даты продажи. По умолчанию действует {selectedAssignPlan.duration_days} дней.
-                    {selectedAssignPlan.covers_training && " Покрывает тренировки."}
-                    {selectedAssignPlan.discount_percent > 0 && ` Скидка ${selectedAssignPlan.discount_percent}%.`}
-                  </div>
-                )}
-                {assignMembership.error && (
-                  <div className="text-xs text-red-600 mt-2">
-                    {(assignMembership.error as Error).message}
-                  </div>
-                )}
-              </div>
-            )}
           </Section>
 
           {/* 7. Комментарий */}
-          <Section title="7. Комментарий">
+          <Section title="6. Комментарий">
             <textarea
               className="input min-h-[72px] font-sans"
               placeholder="Например: день рождения, VIP-гость, нужен напиток"
@@ -913,18 +867,20 @@ export default function BookingScenarioDialog({ date, time = "10:00", onClose }:
 
           <div className="my-4 border-t border-stone-200" />
 
-          <PriceRow
-            label={
-              quote?.basket_unit
-                ? isRangeCategory
-                  ? `Базовая цена (${guests} × ${formatRub(perGuestUnitPrice)})`
-                  : `Базовая цена (${quote.baskets} ${unitWord})`
-                : perGuest
-                  ? `Базовая цена (${guests} × ${formatRub(perGuestUnitPrice)})`
-                  : "Базовая цена"
-            }
-            k={quote?.base_price_kopecks ?? 0}
-          />
+          {(!hasTraining || (quote?.base_price_kopecks ?? 0) > 0) && (
+            <PriceRow
+              label={
+                quote?.basket_unit
+                  ? isRangeCategory
+                    ? `Базовая цена (${guests} × ${formatRub(perGuestUnitPrice)})`
+                    : `Базовая цена (${quote.baskets} ${unitWord})`
+                  : perGuest
+                    ? `Базовая цена (${guests} × ${formatRub(perGuestUnitPrice)})`
+                    : "Базовая цена"
+              }
+              k={quote?.base_price_kopecks ?? 0}
+            />
+          )}
           {(quote?.equipment_items || []).map((item) => (
             <PriceRow
               key={item.sku}

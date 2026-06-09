@@ -23,6 +23,7 @@ export default function Audit() {
           <option value="service">Услуги</option>
           <option value="instructor">Тренеры</option>
           <option value="resource">Ресурсы</option>
+          <option value="event">Мероприятия</option>
           <option value="setting">Настройки</option>
         </select>
         <select value={action} onChange={(e) => setAction(e.target.value)} className="input max-w-[220px]">
