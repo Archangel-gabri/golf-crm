@@ -86,6 +86,35 @@ curl -I https://your-domain.com/
 curl https://your-domain.com/api/health
 ```
 
+### Автопродление сертификата (обязательно проверить!)
+
+Схема выше выпускает сертификат в `--standalone`-режиме, и это **работает только один
+раз**. Дальше `certbot renew` падает с `Could not bind TCP port 80` — порт 80 держит
+контейнер `golf-nginx`. Плюс nginx читает сертификаты не из `/etc/letsencrypt`, а из
+bind-mount `deploy/certs`, поэтому даже успешное продление до него не доедет.
+Ровно так прод и лёг 25.07.2026: сайт был недоступен 9 дней.
+
+Рабочая схема (настроена на проде 03.08.2026):
+
+1. В `docker-compose.yml` в сервис nginx смонтирован `/var/www/certbot` — туда ACME
+   кладёт challenge, а `deploy/nginx.prod.conf` уже отдаёт его до 301-редиректа.
+2. `/etc/letsencrypt/renewal/<домен>.conf` переведён на `authenticator = webroot`
+   с `webroot_path = /var/www/certbot` — продление идёт без остановки nginx.
+3. `deploy/renew-deploy-hook.sh` установлен на сервере как
+   `/etc/letsencrypt/renewal-hooks/deploy/golf-nginx.sh` (`chmod +x`) — копирует новые
+   сертификаты в `deploy/certs` и делает `nginx -s reload`. Пишет в
+   `/var/log/golf-cert-deploy.log`.
+
+Проверка (не трогает боевой сертификат, nginx останавливать не нужно):
+
+```sh
+certbot renew --dry-run     # ждёт случайную паузу до ~7 мин, это нормально
+certbot certificates        # срок действия
+tail /var/log/golf-cert-deploy.log
+```
+
+Продление сработает само за 30 дней до истечения (`certbot.timer`, 2 раза в сутки).
+
 ## HTTPS через Caddy
 
 Caddy проще для сертификатов: он сам выпускает и обновляет Let's Encrypt. В
