@@ -50,3 +50,11 @@ Thumbs.db
 .claude/
 sessions/
 .planning/
+
+# Никогда: боевые данные клиента
+golf.db
+*.db
+*.sqlite
+*.bak-portfolio
+deploy/db-dump/
+.env
