@@ -58,3 +58,6 @@ golf.db
 *.bak-portfolio
 deploy/db-dump/
 .env
+
+# Генерируется вольтом, не версионируем
+.proeb/context-pack.md
