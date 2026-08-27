@@ -30,7 +30,12 @@ SAMPLE_NAMES = [
     "Алексей Волков", "Екатерина Лебедева", "Павел Козлов",
 ]
 
-PHONES = lambda: f"+7 (9{random.randint(10, 99)}) {random.randint(100, 999)}-{random.randint(10, 99)}-{random.randint(10, 99)}"
+def random_phone() -> str:
+    """Случайный номер для демо-клиента — реальных телефонов в сиде нет."""
+    return (
+        f"+7 (9{random.randint(10, 99)}) {random.randint(100, 999)}"
+        f"-{random.randint(10, 99)}-{random.randint(10, 99)}"
+    )
 
 
 @router.post("/seed")
@@ -46,8 +51,9 @@ def seed_demo(
     if len(customers) < 10:
         for n in SAMPLE_NAMES:
             if not db.execute(select(Customer).where(Customer.name == n)).scalar_one_or_none():
-                c = Customer(name=n, phone=PHONES(), email=f"{n.split()[0].lower()}@demo.ru")
-                db.add(c); customers.append(c)
+                c = Customer(name=n, phone=random_phone(), email=f"{n.split()[0].lower()}@demo.ru")
+                db.add(c)
+                customers.append(c)
         db.flush()
 
     # Attach random memberships to first 5 customers
@@ -175,7 +181,8 @@ def wipe_demo(
     rows = db.execute(select(Booking).where(Booking.comment == "(demo)")).scalars().all()
     n = 0
     for b in rows:
-        db.delete(b); n += 1
+        db.delete(b)
+        n += 1
     audit.log(db, user, AuditAction.DELETE.value, "demo_seed", None,
               summary=f"Удалено демо-броней: {n}")
     db.commit()

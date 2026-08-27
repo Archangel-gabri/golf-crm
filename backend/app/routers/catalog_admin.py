@@ -8,8 +8,8 @@ from sqlalchemy import select, delete
 from ..db import get_db
 from ..deps import get_current_user, require_manager, require_admin
 from ..models import (
-    Service, Instructor, Resource, Zone, InstructorSpecialization,
-    InstructorServicePrice, InstructorResource, ResourceService, Specialization, User,
+    Service, Instructor, Resource, InstructorSpecialization,
+    InstructorServicePrice, InstructorResource, ResourceService, User,
     Booking, Customer, InstructorCustomer,
 )
 from ..catalog_sync import ensure_official_price_catalog

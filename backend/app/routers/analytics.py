@@ -1,8 +1,7 @@
 """Rich dashboard analytics: heatmap, pace, revenue-by-category, utilization, RevPATT."""
 from __future__ import annotations
 from collections import defaultdict
-from datetime import date, datetime, timedelta
-from typing import List, Optional
+from datetime import date, timedelta
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -231,7 +230,6 @@ def business(user=Depends(get_current_user), db: Session = Depends(get_db)):
     d7_ago = today - timedelta(days=6)               # inclusive 7 days
     d14_ago = today - timedelta(days=13)
     d30_ago = today - timedelta(days=29)
-    d28_ago_forecast = today - timedelta(days=27)    # rolling 4 weeks baseline
 
     # Revenue attributes money to the day the session was scheduled (starts_at)
     # — deliberately, so "завтра завершённая" бронь всё равно считается завтра.

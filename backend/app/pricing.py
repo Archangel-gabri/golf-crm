@@ -1,12 +1,12 @@
 """Price calculator: base price + instructor override + coupon discount."""
 from __future__ import annotations
-from datetime import datetime, date
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from .models import Service, Instructor, InstructorServicePrice, Coupon
+from .models import Service, InstructorServicePrice, Coupon
 
 
 @dataclass

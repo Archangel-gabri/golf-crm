@@ -64,6 +64,9 @@ Golf/
 │   │   ├── deps.py              # get_current_user, require_admin/manager
 │   │   ├── scheduler.py         # слоты, конфликты, видимость по сезону
 │   │   ├── audit.py
+│   │   ├── migrations.py        # патчи легаси-схемы SQLite + идемпотентные data-fixup
+│   │   ├── csrf.py              # двойная кука + сверка заголовка
+│   │   ├── rate_limit.py        # скользящее окно на /auth/login
 │   │   ├── seed.py
 │   │   └── routers/
 │   │       ├── auth.py          # /auth/login, /logout, /me
@@ -79,8 +82,11 @@ Golf/
 │   │       ├── calendar.py      # event feed для timeline + drag/drop reschedule
 │   │       ├── admin.py         # staff CRUD, audit log, settings
 │   │       └── search.py        # /search?q=… (Cmd+K палитра)
+│   ├── alembic/                 # миграции схемы (владелец схемы с фазы 03)
+│   ├── tests/                   # pytest: аутентификация + боевой конфиг
 │   ├── Dockerfile
 │   ├── requirements.txt
+│   ├── requirements-dev.txt
 │   └── run.py
 │
 ├── frontend/                    # React + Vite + TS + Tailwind
@@ -138,10 +144,9 @@ Golf/
 │   ├── backup-sqlite.sh         # legacy SQLite .backup
 │   └── backup-db.sh             # совместимость для старых cron-задач
 │
+├── design/tokens.json           # визуальный контракт (см. DESIGN.md)
 ├── docker-compose.yml           # postgres, backend, frontend, nginx, backup
-├── .env.example                 # шаблон окружения
-├── run-v2.bat                   # Windows-только dev запуск через subst Z:
-└── golf.db                      # SQLite (WAL, foreign keys)
+└── .env.example                 # шаблон окружения
 ```
 
 ## Запуск — локальная разработка

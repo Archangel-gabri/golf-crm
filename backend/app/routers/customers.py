@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, func
 
 from ..db import get_db
-from ..deps import get_current_user, require_manager
+from ..deps import get_current_user
 from datetime import date
 from ..models import Customer, User, Booking, Membership, MembershipPlan, Service, Instructor, Resource
 from ..schemas import CustomerIn, CustomerOut, CustomerWithStatsOut, CustomerVisitOut

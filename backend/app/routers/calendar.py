@@ -1,5 +1,5 @@
 """Calendar endpoints: event feed for timeline view and drag/drop reschedule."""
-from datetime import datetime, timedelta, date
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel

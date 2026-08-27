@@ -6,11 +6,17 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
 
 from ..db import get_db
-from ..deps import get_current_user, require_manager
-from ..models import Booking, BookingItem, Service, User, Coupon, Instructor
+from ..deps import get_current_user
+from ..models import Booking, BookingItem, Service, User, Instructor
 from ..schemas import (
-    BookingIn, BookingOut, BookingRichOut, BookingItemOut, BookingPatch,
+    BookingIn, BookingRichOut, BookingItemOut, BookingPatch,
     ScenarioIn, ScenarioCatalog,
+)
+from pydantic import BaseModel, Field
+
+from ..booking_scenario import (
+    ScenarioInput, resolve_scenario,
+    categories_public, training_options_public,
 )
 from ..enums import BookingStatus, PaymentStatus, AuditAction, UserRole
 from ..scheduler import find_conflicts
@@ -104,11 +110,6 @@ def _check_trainer_schedule(db: Session, instructor_id: Optional[int],
             f"{day.get('start')}–{day.get('end')}."
         )
     return None
-from ..booking_scenario import (
-    ScenarioInput, resolve_scenario,
-    categories_public, training_options_public,
-)
-
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
 
@@ -438,9 +439,6 @@ def patch_booking(
 
 
 # ── Full edit: service/instructor/customer/guests/coupon → recalc price ──
-from pydantic import BaseModel, Field
-
-
 class BookingEditIn(BaseModel):
     service_id: Optional[int] = None
     instructor_id: Optional[int] = None
@@ -584,8 +582,10 @@ def full_edit_booking(
         val = getattr(payload, field)
         if val is not None:
             setattr(b, field, val)
-    if payload.starts_at: b.starts_at = payload.starts_at
-    if payload.ends_at: b.ends_at = payload.ends_at
+    if payload.starts_at:
+        b.starts_at = payload.starts_at
+    if payload.ends_at:
+        b.ends_at = payload.ends_at
 
     if b.ends_at <= b.starts_at:
         raise HTTPException(400, "ends_at must be after starts_at")

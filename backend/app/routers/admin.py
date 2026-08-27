@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from ..db import get_db
-from ..deps import require_admin, get_current_user
+from ..deps import require_admin
 from ..models import User, AuditLog, AppSetting, Instructor
 from ..enums import UserRole, AuditAction
 from ..security import hash_password

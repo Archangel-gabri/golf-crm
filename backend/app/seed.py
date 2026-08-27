@@ -47,8 +47,8 @@ def _seed_users(db: Session) -> None:
     INITIAL_ADMIN_PASSWORD env var; creates a single admin with that password
     and must_change_password=True so the operator changes it on first login.
 
-    Dev/staging: creates the legacy roster (admin/admin, dini/dini, …) so
-    local development just works.
+    Dev/staging: creates a demo roster (admin/admin, manager/manager, …) so
+    local development just works. Names are placeholders, not real staff.
     """
     if settings.is_production:
         initial = os.environ.get("INITIAL_ADMIN_PASSWORD", "").strip()
@@ -75,15 +75,15 @@ def _seed_users(db: Session) -> None:
              name="Администратор", role=UserRole.ADMIN.value,
              must_change_password=True),
         # Named "руководители" — полный доступ.
-        User(username="dini", password_hash=hash_password("dini"),
-             name="Дини", role=UserRole.ADMIN.value,
+        User(username="manager", password_hash=hash_password("manager"),
+             name="Управляющий", role=UserRole.ADMIN.value,
              must_change_password=True),
         # "Администраторы (ресепшен)" — только брони + справочники.
-        User(username="olga", password_hash=hash_password("olga"),
-             name="Ольга", role=UserRole.STAFF.value,
+        User(username="reception1", password_hash=hash_password("reception1"),
+             name="Администратор ресепшена", role=UserRole.STAFF.value,
              must_change_password=True),
-        User(username="arbi", password_hash=hash_password("arbi"),
-             name="Арби", role=UserRole.STAFF.value,
+        User(username="reception2", password_hash=hash_password("reception2"),
+             name="Администратор ресепшена (смена 2)", role=UserRole.STAFF.value,
              must_change_password=True),
     ])
 
@@ -150,11 +150,11 @@ def seed_if_empty():
                                     season=Season.ALL_YEAR.value))
 
         db.add_all([
-            Instructor(name="Вероника Антропова", specialization="Тренер",
+            Instructor(name="Анна Тренерова", specialization="Тренер",
                        color="#2E9A6A", bio=""),
-            Instructor(name="Карина Антропова", specialization="Тренер",
+            Instructor(name="Мария Тренерова", specialization="Тренер",
                        color="#3A6EA5", bio=""),
-            Instructor(name="Сергей Зубрилен", specialization="Тренер",
+            Instructor(name="Сергей Тренеров", specialization="Тренер",
                        color="#C9A961", bio=""),
             Instructor(name="Дарья", specialization="Стажёр",
                        color="#8B5A96", bio=""),

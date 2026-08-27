@@ -7,7 +7,7 @@ from ..db import get_db
 from ..deps import get_current_user
 from ..models import Booking, Customer, Resource
 from ..schemas import DashboardStats, BookingRichOut
-from ..enums import BookingStatus, PaymentStatus
+from ..enums import BookingStatus
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 

@@ -1,12 +1,12 @@
-from datetime import date, datetime
-from typing import List, Optional
+from datetime import date
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from ..db import get_db
 from ..deps import get_current_user
-from ..models import Resource, Zone, ResourceType, ResourceService, Service
+from ..models import Resource, Zone, ResourceType, ResourceService
 from ..schemas import ResourceOut, ZoneOut, ResourceTypeOut, SlotOut
 from ..scheduler import slots_for_day, visible_resources
 

@@ -8,9 +8,14 @@ schema with ALTER TABLE here. After Phase 03 schema is owned by Alembic — see
    pre-Phase-03 SQLite database without running `alembic stamp head` /
    `alembic upgrade head`. These run only on SQLite.
 
-2. **Data fixups** — idempotent, marker-guarded data tasks (sync МГГК roster,
-   audit default passwords, top-up driving-range lanes). These run on both
-   SQLite and Postgres.
+2. **Data fixups** — idempotent, marker-guarded data tasks (audit default
+   passwords, top-up driving-range lanes). These run on both SQLite and
+   Postgres.
+
+Client-specific staff rosters do NOT belong here. Staff and instructors are
+created through the app itself (`/staff`, `/instructors`) or by the initial
+seed; a hardcoded roster in shipped code is one deployment's data, not
+behaviour every installation needs.
 """
 import hashlib
 import logging
@@ -18,7 +23,6 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .config import settings
 
 log = logging.getLogger("golfadmin.migrations")
 
@@ -42,8 +46,6 @@ def apply_migrations(engine: Engine):
             _apply_sqlite_schema_patches(conn)
         # Data fixups run on both backends.
         _ensure_24_range_lanes(conn)
-        _sync_mggk_staff_and_trainers(conn)
-        _sync_instructor_user_accounts(conn)
         _audit_default_passwords(conn)
 
 
@@ -170,171 +172,9 @@ def _ensure_24_range_lanes(conn):
                 ), {"rid": rid, "sid": sid})
 
 
-# ── МГГК staff + trainer roster sync ─────────────────────────────────────────
-# Target roster (per product owner):
-#   Руководители (admin role):  Дини (dini)
-#   Администраторы (staff role): Ольга (olga), Арби (arbi)
-#   Тренеры: Вероника Антропова, Карина Антропова, Сергей Зубрилен, Дарья (стажёр)
-#
-# Applied on every startup, but guarded by an AppSetting marker so it only runs once.
-_STAFF_ROSTER_MARKER = "mggk_roster_v1_applied"
-
-_MGGK_USERS = [
-    # (username, name, role, password_plain)
-    ("dini", "Дини", "admin", "dini"),
-    ("olga", "Ольга", "staff", "olga"),
-    ("arbi", "Арби", "staff", "arbi"),
-]
-
-_MGGK_TRAINERS = [
-    # (name, specialization, color)
-    ("Вероника Антропова", "Тренер", "#2E9A6A"),
-    ("Карина Антропова", "Тренер", "#3A6EA5"),
-    ("Сергей Зубрилен", "Тренер", "#C9A961"),
-    ("Дарья", "Стажёр", "#8B5A96"),
-]
-
-
-def _sync_mggk_staff_and_trainers(conn):
-    """Idempotently seed МГГК accounts + replace default trainers. Safe to run
-    every boot — guarded by an app_settings marker so it runs at most once.
-
-    In production we refuse to create accounts with default passwords (username==password).
-    Existing accounts with default passwords get must_change_password=1 via
-    _audit_default_passwords; this function simply skips creating new ones.
-    """
-    row = conn.execute(text(
-        "SELECT value FROM app_settings WHERE key = :k"
-    ), {"k": _STAFF_ROSTER_MARKER}).fetchone()
-    if row:
-        return
-    if settings.is_production:
-        log.warning("Skipping default-password staff/trainer sync in production ENV")
-        conn.execute(text(
-            "INSERT INTO app_settings (key, value, created_at, updated_at) "
-            "VALUES (:k, 'skipped-prod', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
-            "ON CONFLICT(key) DO UPDATE SET value = 'skipped-prod'"
-        ), {"k": _STAFF_ROSTER_MARKER})
-        return
-
-    # Users table may not exist yet if this is a fresh DB — create_all happens before us
-    # but seed_if_empty runs AFTER migrations. If there are no users, we skip: seed will
-    # create the canonical roster.
-    user_count = conn.execute(text("SELECT COUNT(*) FROM users")).scalar() or 0
-    if user_count == 0:
-        return  # fresh DB, seed will handle
-
-    # Lazy import to avoid circular import at module load time.
-    from .security import hash_password
-
-    for username, display_name, role, password in _MGGK_USERS:
-        existing = conn.execute(text(
-            "SELECT id FROM users WHERE username = :u"
-        ), {"u": username}).fetchone()
-        if existing:
-            continue
-        conn.execute(text(
-            "INSERT INTO users (username, password_hash, name, email, role, "
-            "telegram_chat_id, active, created_at, updated_at) "
-            "VALUES (:u, :p, :n, '', :r, '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-        ), {"u": username, "p": hash_password(password), "n": display_name, "r": role})
-
-    # Deactivate legacy default trainers (by exact name) if they exist — preserves
-    # historical bookings by not deleting, just hiding.
-    legacy_names = (
-        "Матросов Алексей Викторович",
-        "Иванов Иван Иванович",
-        "Петрова Елена Сергеевна",
-    )
-    for name in legacy_names:
-        conn.execute(text(
-            "UPDATE instructors SET active = :active WHERE name = :n"
-        ), {"n": name, "active": False})
-
-    # Add new МГГК trainers if missing.
-    for name, spec, color in _MGGK_TRAINERS:
-        existing = conn.execute(text(
-            "SELECT id FROM instructors WHERE name = :n"
-        ), {"n": name}).fetchone()
-        if existing:
-            # Make sure it's active and has the right specialization.
-            conn.execute(text(
-                "UPDATE instructors SET active = :active, specialization = :s "
-                "WHERE id = :id"
-            ), {"s": spec, "id": existing[0], "active": True})
-            continue
-        conn.execute(text(
-            "INSERT INTO instructors (name, specialization, color, bio, avatar_url, "
-            "phone, email, working_hours, trainer_type, tags, hourly_payout_kopecks, active, "
-            "created_at, updated_at) "
-            "VALUES (:n, :s, :c, '', '', '', '', '{}', 'club', '[]', 0, 1, "
-            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-        ), {"n": name, "s": spec, "c": color})
-
-    conn.execute(text(
-        "INSERT INTO app_settings (key, value, created_at, updated_at) "
-        "VALUES (:k, 'true', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
-        "ON CONFLICT(key) DO UPDATE SET value = 'true'"
-    ), {"k": _STAFF_ROSTER_MARKER})
-
-
-# Link each trainer to their own login account.
-_INSTRUCTOR_USERS = [
-    # (username, password, linked instructor name)
-    ("veronika", "veronika", "Вероника Антропова"),
-    ("karina", "karina", "Карина Антропова"),
-    ("sergey", "sergey", "Сергей Зубрилен"),
-    ("darya", "darya", "Дарья"),
-]
-
-
-def _sync_instructor_user_accounts(conn):
-    """Create a `User` per trainer (role=instructor) linked via users.instructor_id
-    so the trainer's personal dashboard shows only their own bookings.
-    Idempotent: skips users that already exist.
-
-    In production we refuse to insert default-password instructor accounts.
-    """
-    # Skip if the users table isn't there yet (fresh DB — seed will run later).
-    user_count = conn.execute(text("SELECT COUNT(*) FROM users")).scalar() or 0
-    if user_count == 0:
-        return
-    if settings.is_production:
-        log.warning("Skipping default-password instructor account sync in production ENV")
-        return
-
-    from .security import hash_password
-
-    for username, password, instr_name in _INSTRUCTOR_USERS:
-        instr_row = conn.execute(text(
-            "SELECT id FROM instructors WHERE name = :n"
-        ), {"n": instr_name}).fetchone()
-        if not instr_row:
-            continue  # trainer not yet seeded — migration will re-run next boot
-        instr_id = instr_row[0]
-
-        existing = conn.execute(text(
-            "SELECT id FROM users WHERE username = :u"
-        ), {"u": username}).fetchone()
-        if existing:
-            # Ensure the link is set, even if user already existed from a prior
-            # migration run before instructor_id column existed.
-            conn.execute(text(
-                "UPDATE users SET instructor_id = :iid, role = 'instructor' "
-                "WHERE id = :uid AND (instructor_id IS NULL OR instructor_id != :iid)"
-            ), {"iid": instr_id, "uid": existing[0]})
-            continue
-        conn.execute(text(
-            "INSERT INTO users (username, password_hash, name, email, role, "
-            "telegram_chat_id, active, instructor_id, created_at, updated_at) "
-            "VALUES (:u, :p, :n, '', 'instructor', '', 1, :iid, "
-            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-        ), {"u": username, "p": hash_password(password), "n": instr_name, "iid": instr_id})
-
-
 # ── default-password audit ───────────────────────────────────────────────────
 # One-time pass: any active user whose password equals their username (which is
-# the case for the seeded МГГК roster) gets must_change_password=1, forcing them
+# the case for the dev seed roster) gets must_change_password=1, forcing them
 # to set a real password on next login. Marker-guarded so we run argon2.verify
 # at most once per deploy.
 _DEFAULT_PW_AUDIT_MARKER = "default_password_audit_v1"
