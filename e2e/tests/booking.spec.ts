@@ -1,15 +1,17 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./fixtures";
+import { authenticate, csrfHeaders } from "./fixtures";
 
 test.beforeEach(async ({ page }) => {
-  await login(page);
+  await authenticate(page);
 });
 
 test("tee-sheet renders grid with resources", async ({ page }) => {
-  await page.getByRole("link", { name: "Tee-Sheet" }).click();
+  // The route is intentionally not in the current sidebar; exercise it
+  // directly instead of waiting for the removed legacy navigation label.
+  await page.goto("/tee-sheet");
   await expect(page.getByTestId("tee-sheet-page")).toBeVisible();
   await expect(page.getByTestId("tee-sheet-grid")).toBeVisible();
-  // at least one resource header visible (SkyTrak 1, id=15 in seed)
+  // At least one synthetic seed resource header is visible.
   await expect(page.locator('[data-testid^="resource-head-"]').first()).toBeVisible();
 });
 
@@ -26,6 +28,7 @@ test("create a booking via API and see it on grid", async ({ page }) => {
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00`;
   };
   const res = await page.request.post("http://127.0.0.1:8000/bookings", {
+    headers: await csrfHeaders(page.request),
     data: {
       resource_id: 15,  // SkyTrak 1
       starts_at: fmt(starts),
@@ -37,7 +40,7 @@ test("create a booking via API and see it on grid", async ({ page }) => {
 
   // Navigate to Tee-Sheet for that day and verify booking renders
   const dayISO = `${starts.getFullYear()}-${String(starts.getMonth() + 1).padStart(2, "0")}-${String(starts.getDate()).padStart(2, "0")}`;
-  await page.getByRole("link", { name: "Tee-Sheet" }).click();
+  await page.goto("/tee-sheet");
   await page.getByTestId("date-picker").fill(dayISO);
   await expect(page.locator('[data-testid^="booking-"]').first()).toBeVisible();
 });

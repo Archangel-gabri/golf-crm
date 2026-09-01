@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./fixtures";
+import { authenticate } from "./fixtures";
 
 test("create new customer and find by search", async ({ page }) => {
-  await login(page);
+  await authenticate(page);
   await page.getByRole("link", { name: "Клиенты" }).click();
   await expect(page.getByTestId("customers-page")).toBeVisible();
 
@@ -19,14 +19,14 @@ test("create new customer and find by search", async ({ page }) => {
 });
 
 test("services editor lists and allows toggle", async ({ page }) => {
-  await login(page);
+  await authenticate(page);
   await page.getByRole("link", { name: "Услуги", exact: true }).click();
   await expect(page.getByTestId("service-editor-page")).toBeVisible();
   await expect(page.locator('[data-testid^="service-row-"]').first()).toBeVisible();
 });
 
 test("instructor editor lists and allows creation", async ({ page }) => {
-  await login(page);
+  await authenticate(page);
   await page.getByRole("link", { name: "Тренеры" }).click();
   await expect(page.getByTestId("instructor-editor-page")).toBeVisible();
   await expect(page.locator('[data-testid^="instr-card-"]').first()).toBeVisible();

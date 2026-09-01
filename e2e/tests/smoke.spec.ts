@@ -11,5 +11,6 @@ test("backend /health answers", async ({ request }) => {
 test("frontend login page renders", async ({ page }) => {
   await page.goto("/login");
   await expect(page.getByTestId("login-form")).toBeVisible();
-  await expect(page.getByTestId("username")).toHaveValue("admin");
+  // Never prefill a privileged username on the real login form.
+  await expect(page.getByTestId("username")).toHaveValue("");
 });

@@ -2,10 +2,11 @@
  * Direct API tests — no UI, verifying FastAPI endpoints work and RBAC/auth hold.
  */
 import { test, expect, APIRequestContext } from "@playwright/test";
+import { authenticatedApi, csrfHeaders } from "./fixtures";
 
 const BASE = "http://127.0.0.1:8000";
 
-async function login(req: APIRequestContext, username = "admin", password = "admin") {
+async function login(req: APIRequestContext, username = "admin", password = process.env.GOLF_E2E_ADMIN_PASSWORD || "") {
   const r = await req.post(`${BASE}/auth/login`, { data: { username, password } });
   expect(r.ok()).toBeTruthy();
   return r;
@@ -28,8 +29,7 @@ test("login + me returns user", async ({ playwright }) => {
 });
 
 test("list resources returns array", async ({ playwright }) => {
-  const ctx = await playwright.request.newContext();
-  await login(ctx);
+  const ctx = await authenticatedApi(playwright);
   const r = await ctx.get(`${BASE}/resources`);
   expect(r.ok()).toBeTruthy();
   const data = await r.json();
@@ -39,8 +39,7 @@ test("list resources returns array", async ({ playwright }) => {
 });
 
 test("create booking and detect conflict on overlap", async ({ playwright }) => {
-  const ctx = await playwright.request.newContext();
-  await login(ctx);
+  const ctx = await authenticatedApi(playwright);
 
   const resources = await (await ctx.get(`${BASE}/resources/visible`)).json();
   const services = await (await ctx.get(`${BASE}/catalog/services`)).json();
@@ -68,13 +67,14 @@ test("create booking and detect conflict on overlap", async ({ playwright }) => 
     guests: 1,
   };
 
-  const r1 = await ctx.post(`${BASE}/bookings`, { data: body });
+  const headers = await csrfHeaders(ctx);
+  const r1 = await ctx.post(`${BASE}/bookings`, { data: body, headers });
   expect(r1.ok()).toBeTruthy();
   const b1 = await r1.json();
   expect(b1.id).toBeGreaterThan(0);
 
   // Overlapping booking on same resource should 409
-  const r2 = await ctx.post(`${BASE}/bookings`, { data: body });
+  const r2 = await ctx.post(`${BASE}/bookings`, { data: body, headers });
   expect(r2.status()).toBe(409);
 
   await ctx.dispose();

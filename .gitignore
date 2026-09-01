@@ -21,10 +21,13 @@ build/
 playwright-report/
 test-results/
 .playwright-mcp/
+e2e/.auth/
 
 # Secrets / env
-# .env intentionally tracked (test data per project decision 2026-04-27)
-.env.local
+# Runtime environment files are local-only; a future sanitized template may be tracked.
+.env
+.env.*
+!.env.example
 deploy/certs/
 .secrets.baseline
 
@@ -57,7 +60,6 @@ golf.db
 *.sqlite
 *.bak-portfolio
 deploy/db-dump/
-.env
 
 # Генерируется вольтом, не версионируем
 .proeb/context-pack.md

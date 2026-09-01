@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./fixtures";
+import { authenticate, csrfHeaders } from "./fixtures";
 
 test("coupon CRUD + applies to price quote", async ({ page, request }) => {
-  await login(page);
+  await authenticate(page);
 
   // create via API (faster)
   const ctxHeaders = await page.context().storageState();
@@ -24,8 +24,9 @@ test("coupon CRUD + applies to price quote", async ({ page, request }) => {
 });
 
 test("price quote endpoint returns coupon discount", async ({ page }) => {
-  await login(page);
+  await authenticate(page);
   const resp = await page.request.post("http://127.0.0.1:8000/coupons/quote", {
+    headers: await csrfHeaders(page.request),
     data: { service_id: 1, guests: 1, duration_min: 60, coupon_code: "NOSUCHCODE" },
   });
   expect(resp.ok()).toBeTruthy();

@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./fixtures";
+import { authenticate, loginViaUi } from "./fixtures";
 
 test("login with valid credentials lands on dashboard", async ({ page }) => {
-  await login(page, "admin", "admin");
+  await loginViaUi(page);
   await expect(page.getByTestId("dashboard-page")).toBeVisible();
   await expect(page.getByTestId("current-user")).toContainText(/Админ/i);
 });
@@ -17,7 +17,7 @@ test("login with wrong password shows error", async ({ page }) => {
 });
 
 test("logout clears session", async ({ page }) => {
-  await login(page);
+  await authenticate(page);
   await page.getByTestId("logout-btn").click();
   await expect(page).toHaveURL(/\/login$/);
   await page.goto("/");

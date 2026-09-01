@@ -11,7 +11,7 @@ const ICONS: Record<string, any> = {
 };
 
 const ROUTES: Record<string, (id: number) => string> = {
-  booking: () => "/calendar",
+  booking: () => "/bookings",
   customer: () => "/customers",
   instructor: () => "/instructors",
   service: () => "/catalog",

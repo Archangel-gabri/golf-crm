@@ -125,8 +125,11 @@ Golf/
 │   │   ├── smoke.spec.ts
 │   │   ├── auth.spec.ts
 │   │   ├── booking.spec.ts
+│   │   ├── coupons.spec.ts
 │   │   ├── customers.spec.ts
+│   │   ├── navigation.spec.ts
 │   │   └── api.spec.ts
+│   ├── global-setup.ts
 │   └── playwright.config.ts
 │
 ├── deploy/                      # Production инфра
@@ -146,7 +149,7 @@ Golf/
 │
 ├── design/tokens.json           # визуальный контракт (см. DESIGN.md)
 ├── docker-compose.yml           # postgres, backend, frontend, nginx, backup
-└── .env.example                 # шаблон окружения
+└── .gitignore                   # секреты, БД, dumps и test artifacts не версионируются
 ```
 
 ## Запуск — локальная разработка
@@ -179,8 +182,17 @@ bash scripts/test.sh
 ```
 
 - Backend: импорт-смок + pytest (`backend/tests/`, 9 проверок)
-- Frontend: `tsc --noEmit`
-- E2E: Playwright (chromium) — 16 сценариев, нужен поднятый стек
+- Frontend: TypeScript + production Vite build
+- E2E: Playwright (Chromium) — 19 сценариев; backend и frontend поднимаются сами
+
+`scripts/test.sh` всегда копирует исходники в `/tmp/golf-test-*`, создаёт свежие
+synthetic SQLite-базы и не копирует `.env`, `golf.db`, backups и `node_modules`.
+Прямой `npx playwright test` в рабочем checkout намеренно заблокирован, чтобы E2E
+не мог случайно изменить локальную или восстановленную базу.
+
+Для полного прогона нужны Node.js 20+, `uv`, `rsync` и Chromium Headless Shell
+точной версии из `e2e/package-lock.json` (`cd e2e && npm ci && npx playwright
+install --only-shell chromium`).
 
 Только бэкенд, без Docker и без Playwright:
 
@@ -305,8 +317,8 @@ override-ценами / working hours), ресурсы (по зонам, сов�
 | Слой | Технологии |
 |------|------------|
 | Backend | FastAPI 0.115, SQLAlchemy 2.0, Pydantic 2, python-jose, argon2-cffi, gunicorn + uvicorn workers |
-| Frontend | React 18, Vite 5, TypeScript 5, Tailwind 3, TanStack Query 5, React Router 6, lucide-react |
-| E2E | Playwright 1.48 (chromium) |
+| Frontend | React 18, Vite 5, TypeScript 5, Tailwind 3, TanStack Query 5, React Router 7, lucide-react |
+| E2E | Playwright 1.59 (Chromium Headless Shell) |
 | DB | SQLite (разработка) / PostgreSQL (production-ready через `DATABASE_URL`) |
 | Ops | Docker + Compose, nginx или Caddy, Postgres backup service, systemd/certbot для bare-metal |
 | Security tooling | bandit, pip-audit, npm audit, detect-secrets |
