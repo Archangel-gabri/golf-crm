@@ -6,14 +6,38 @@
 """
 from __future__ import annotations
 
+import atexit
 import os
+from pathlib import Path
+import secrets
+import sys
 import tempfile
 
 import pytest
 
-os.environ.setdefault("ENV", "local")
-os.environ.setdefault("SECRET_KEY", "t" * 64)
-os.environ.setdefault("DATABASE_URL", "sqlite:///" + tempfile.mktemp(suffix=".db"))
+# Own the database even for direct pytest: inherited shell configuration is not
+# permission to run app lifespan/migrations against a developer or production DB.
+if any(name == "app" or name.startswith("app.") for name in sys.modules):
+    raise pytest.UsageError("Application modules were imported before test isolation")
+
+_database_directory = tempfile.TemporaryDirectory(prefix="golf-pytest-")
+atexit.register(_database_directory.cleanup)
+os.environ.update(
+    ENV="local",
+    SECRET_KEY=secrets.token_hex(64),
+    DATABASE_URL="sqlite:///" + str(Path(_database_directory.name) / "test.sqlite"),
+    CORS_ORIGINS="http://127.0.0.1:5173",
+    GOLF_TEST_ISOLATED="1",
+)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    # Dispose only an already imported test engine before removing its owned DB.
+    db_module = sys.modules.get("app.db")
+    engine = getattr(db_module, "engine", None)
+    if engine is not None:
+        engine.dispose()
+    _database_directory.cleanup()
 
 
 @pytest.fixture(scope="session")

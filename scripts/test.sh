@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
 # Hermetic full suite. It never imports the real checkout, reads its .env, or
 # opens its ignored golf.db/backups: all mutable work happens in /tmp.
+# This isolates project data/config, not arbitrary host Python startup hooks.
 set -euo pipefail
 
+if (( $# )); then
+  echo "This script runs the complete gate and accepts no Playwright filters/options." >&2
+  exit 2
+fi
+
+if [[ -n "${PYTEST_ADDOPTS:-}" ]]; then
+  echo "This script runs the complete gate and requires PYTEST_ADDOPTS to be unset or empty." >&2
+  exit 2
+fi
+
 SOURCE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+node "$SOURCE_ROOT/scripts/tests/test-gate.mjs"
 TEST_ROOT="$(mktemp -d /tmp/golf-test-XXXXXXXX)"
+export GOLF_TEST_ISOLATED=1
 
 cleanup() {
   local suite_status=$?
@@ -103,8 +116,8 @@ echo "▸ Backend: import + pytest"
     venv/bin/python -m pytest -q
 )
 
-echo "▸ Frontend: typecheck + production build"
-(cd "$TEST_ROOT/frontend" && npm run build)
+echo "▸ Frontend: lint + gate regressions + typecheck + production build"
+(cd "$TEST_ROOT/frontend" && npm run check)
 
 export CI=1
 export GOLF_E2E_ISOLATED=1
@@ -116,6 +129,6 @@ export GOLF_E2E_PYTHON="$TEST_ROOT/backend/venv/bin/python"
 export PLAYWRIGHT_HTML_OPEN=never
 
 echo "▸ Playwright E2E"
-(cd "$TEST_ROOT/e2e" && npm test -- "$@")
+(cd "$TEST_ROOT/e2e" && npm test)
 
 echo "✓ All hermetic tests passed"

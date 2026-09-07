@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -77,4 +78,6 @@ class Settings(BaseSettings):
         return self.DATABASE_URL.startswith("sqlite")
 
 
-settings = Settings()
+# Synthetic test callers explicitly opt out of every dotenv search path. This
+# also covers the staged checkout's parent (/tmp), without changing normal config.
+settings = Settings(_env_file=None) if os.getenv("GOLF_TEST_ISOLATED") == "1" else Settings()

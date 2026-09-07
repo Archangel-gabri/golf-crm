@@ -57,7 +57,6 @@ export function useRealtime() {
             inval(["events", "audit"]);
             break;
           default:
-            // eslint-disable-next-line no-console
             console.debug("[realtime] unknown event:", payload);
         }
       } catch {

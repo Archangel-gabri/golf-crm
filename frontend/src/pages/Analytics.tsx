@@ -181,6 +181,7 @@ function BigCard({
 /* ───────── revenue area chart (SVG, no external libs) ───────── */
 
 function RevenueChart({ data }: { data: DailyPoint[] }) {
+  const [hover, setHover] = useState<DailyPoint | null>(null);
   if (!data.length) return <Empty />;
   const W = 720, H = 220, P = 28;
   const max = Math.max(...data.map((d) => d.revenue_kopecks), 1);
@@ -194,8 +195,6 @@ function RevenueChart({ data }: { data: DailyPoint[] }) {
     total: data.reduce((s, d) => s + d.revenue_kopecks, 0),
     max: data.reduce((a, b) => (b.revenue_kopecks > a.revenue_kopecks ? b : a), data[0]),
   };
-
-  const [hover, setHover] = useState<DailyPoint | null>(null);
 
   return (
     <div>

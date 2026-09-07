@@ -181,18 +181,36 @@ Swagger API: http://127.0.0.1:8000/docs (53 эндпоинта).
 bash scripts/test.sh
 ```
 
-- Backend: импорт-смок + pytest (`backend/tests/`, 9 проверок)
-- Frontend: TypeScript + production Vite build
+- Wrapper: 6 регрессий — запрет `--list`, `--grep`, выбора файла и непустого
+  `PYTEST_ADDOPTS` (`--collect-only`, `-k`); пустое значение разрешено
+- Backend: импорт-смок + pytest (`backend/tests/`, 12 проверок)
+- Frontend: ESLint + 4 регрессии lint-gate + TypeScript + production Vite build
 - E2E: Playwright (Chromium) — 19 сценариев; backend и frontend поднимаются сами
 
 `scripts/test.sh` всегда копирует исходники в `/tmp/golf-test-*`, создаёт свежие
 synthetic SQLite-базы и не копирует `.env`, `golf.db`, backups и `node_modules`.
 Прямой `npx playwright test` в рабочем checkout намеренно заблокирован, чтобы E2E
 не мог случайно изменить локальную или восстановленную базу.
+Команда полного gate не принимает фильтры/опции Playwright и отклоняет непустой
+`PYTEST_ADDOPTS` до начала работы: частичный прогон или перечисление тестов не должны
+заканчиваться сообщением о полном успехе. Для обычного запуска снимите эту переменную
+в текущей команде: `env -u PYTEST_ADDOPTS bash scripts/test.sh`.
+Backend-тесты явно создают собственный SQLite даже при унаследованном `DATABASE_URL`;
+ранний импорт модулей приложения до изоляции отклоняется. Тестовый режим
+`GOLF_TEST_ISOLATED=1` отключает чтение обоих `.env`-путей, включая родителя временной
+копии. Реальные настройки и данные не перезаписываются.
+Это изоляция проектных данных и заданных тестовых опций, а не sandbox для произвольных
+host startup hooks: `PYTHONPATH`, `PYTEST_PLUGINS` и установленные Python-плагины
+остаются частью доверенного окружения запуска.
 
-Для полного прогона нужны Node.js 20+, `uv`, `rsync` и Chromium Headless Shell
+Для полного прогона нужны Node.js `^20.19.0 || ^22.13.0 || >=24`, `uv`, `rsync` и Chromium Headless Shell
 точной версии из `e2e/package-lock.json` (`cd e2e && npm ci && npx playwright
 install --only-shell chromium`).
+
+Отдельный frontend gate — `cd frontend && npm ci && npm run check`. ESLint проверяет
+корректность `.ts/.tsx` в `src/` и два правила React Hooks; имена и типы проверяет
+TypeScript. Это не форматирование, не полный type-aware lint и не проверка поведения
+всех экранов. Уже существующие точечные подавления exhaustive-deps сохранены.
 
 Только бэкенд, без Docker и без Playwright:
 

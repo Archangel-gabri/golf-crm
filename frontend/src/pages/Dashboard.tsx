@@ -1573,9 +1573,10 @@ function ExtendDialog({
   const minutes = useMemo(() => {
     const [hh, mm] = target.split(":").map((x) => parseInt(x, 10));
     if (Number.isNaN(hh) || Number.isNaN(mm)) return 0;
-    const newEnd = new Date(endsAt);
+    const originalEnd = new Date(booking.ends_at);
+    const newEnd = new Date(originalEnd);
     newEnd.setHours(hh, mm, 0, 0);
-    return Math.round((newEnd.getTime() - endsAt.getTime()) / 60000);
+    return Math.round((newEnd.getTime() - originalEnd.getTime()) / 60000);
   }, [target, booking.ends_at]);
 
   const currentDurationMin = Math.max(1, Math.round((endsAt.getTime() - startsAt.getTime()) / 60000));
