@@ -183,9 +183,9 @@ bash scripts/test.sh
 
 - Wrapper: 6 регрессий — запрет `--list`, `--grep`, выбора файла и непустого
   `PYTEST_ADDOPTS` (`--collect-only`, `-k`); пустое значение разрешено
-- Backend: импорт-смок + pytest (`backend/tests/`, 21 проверка)
+- Backend: импорт-смок + pytest (`backend/tests/`, 50 проверок)
 - Frontend: ESLint + 4 регрессии lint-gate + 2 проверки build-config + TypeScript + production Vite build
-- E2E: Playwright (Chromium) — 19 сценариев; backend и frontend поднимаются сами
+- E2E: Playwright (Chromium) — 20 сценариев; backend и frontend поднимаются сами
 
 `scripts/test.sh` всегда копирует исходники в `/tmp/golf-test-*`, создаёт свежие
 synthetic SQLite-базы и не копирует `.env`, `golf.db`, backups и `node_modules`.
@@ -214,8 +214,15 @@ TypeScript. Это не форматирование, не полный type-awa
 
 Vite 7 использует явно заданные прежние JS/CSS transformation targets; это не обещание
 реальной поддержки всех старых браузеров. Причины обновления зависимостей, RED/GREEN,
-точный объём проверок и оставшиеся framework-риски — в
+точный объём первого dependency-пакета и его исторические framework-риски — в
 [dependency gate](docs/testing/2026-09-07-dependency-gate.md).
+
+Отдельный [framework gate](docs/testing/2026-09-07-framework-gate.md) проверяет
+FastAPI 0.141.1 / Starlette 1.6.0: DB-сессия авторизации SSE закрывается до первого
+чанка, тихий disconnect проверяется на настоящем Uvicorn/h11/httptools;
+защищённые GET проверяются с учётом вложенных роутеров; два браузерных
+контекста проверяют реальное SSE-обновление и logout. Оставшиеся advisories `ecdsa`
+и dev-зависимости `pytest` перечислены там явно: это не общий «ноль уязвимостей».
 
 Только бэкенд, без Docker и без Playwright:
 
@@ -237,7 +244,7 @@ python -m pytest -q tests
   на каждом рестарте: сессии слетали у всех, а старые токены оказывались подписаны чужим
   секретом. В проде `COOKIE_SECURE` включается, Swagger закрывается — тест это фиксирует.
 
-> Бэкенд рассчитан на **Python 3.12**. Пины (`pydantic==2.9.2`, `fastapi==0.115.0`) не
+> Бэкенд рассчитан на **Python 3.12**. Пины (`pydantic==2.9.2`, `fastapi==0.141.1`) не
 > собираются на 3.14 — `pydantic-core` не строится под новый PyO3.
 
 ## Безопасность
@@ -339,7 +346,7 @@ override-ценами / working hours), ресурсы (по зонам, сов�
 
 | Слой | Технологии |
 |------|------------|
-| Backend | FastAPI 0.115, SQLAlchemy 2.0, Pydantic 2, python-jose, argon2-cffi, gunicorn + uvicorn workers |
+| Backend | FastAPI 0.141.1, SQLAlchemy 2.0, Pydantic 2, python-jose, argon2-cffi, gunicorn + uvicorn workers |
 | Frontend | React 18, Vite 7, TypeScript 5, Tailwind 3, TanStack Query 5, React Router 7, lucide-react |
 | E2E | Playwright 1.59 (Chromium Headless Shell) |
 | DB | SQLite (разработка) / PostgreSQL (production-ready через `DATABASE_URL`) |
