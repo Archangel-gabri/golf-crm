@@ -183,8 +183,8 @@ bash scripts/test.sh
 
 - Wrapper: 6 регрессий — запрет `--list`, `--grep`, выбора файла и непустого
   `PYTEST_ADDOPTS` (`--collect-only`, `-k`); пустое значение разрешено
-- Backend: импорт-смок + pytest (`backend/tests/`, 12 проверок)
-- Frontend: ESLint + 4 регрессии lint-gate + TypeScript + production Vite build
+- Backend: импорт-смок + pytest (`backend/tests/`, 21 проверка)
+- Frontend: ESLint + 4 регрессии lint-gate + 2 проверки build-config + TypeScript + production Vite build
 - E2E: Playwright (Chromium) — 19 сценариев; backend и frontend поднимаются сами
 
 `scripts/test.sh` всегда копирует исходники в `/tmp/golf-test-*`, создаёт свежие
@@ -211,6 +211,11 @@ install --only-shell chromium`).
 корректность `.ts/.tsx` в `src/` и два правила React Hooks; имена и типы проверяет
 TypeScript. Это не форматирование, не полный type-aware lint и не проверка поведения
 всех экранов. Уже существующие точечные подавления exhaustive-deps сохранены.
+
+Vite 7 использует явно заданные прежние JS/CSS transformation targets; это не обещание
+реальной поддержки всех старых браузеров. Причины обновления зависимостей, RED/GREEN,
+точный объём проверок и оставшиеся framework-риски — в
+[dependency gate](docs/testing/2026-09-07-dependency-gate.md).
 
 Только бэкенд, без Docker и без Playwright:
 
@@ -335,7 +340,7 @@ override-ценами / working hours), ресурсы (по зонам, сов�
 | Слой | Технологии |
 |------|------------|
 | Backend | FastAPI 0.115, SQLAlchemy 2.0, Pydantic 2, python-jose, argon2-cffi, gunicorn + uvicorn workers |
-| Frontend | React 18, Vite 5, TypeScript 5, Tailwind 3, TanStack Query 5, React Router 7, lucide-react |
+| Frontend | React 18, Vite 7, TypeScript 5, Tailwind 3, TanStack Query 5, React Router 7, lucide-react |
 | E2E | Playwright 1.59 (Chromium Headless Shell) |
 | DB | SQLite (разработка) / PostgreSQL (production-ready через `DATABASE_URL`) |
 | Ops | Docker + Compose, nginx или Caddy, Postgres backup service, systemd/certbot для bare-metal |

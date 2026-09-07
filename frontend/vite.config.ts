@@ -4,6 +4,11 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
+  // Preserve Vite 5's resolved JS/CSS transformation targets across the Vite 7
+  // upgrade. This is not an assertion of tested browser runtime/API support.
+  build: {
+    target: ["es2020", "edge88", "firefox78", "chrome87", "safari14"],
+  },
   // Vite (Rollup) treats "#" in paths as URL fragments. When the real path
   // contains "#" we launch through subst'd drive Z: + preserveSymlinks so Vite
   // never realpath()s back to the dirty path. See run-v2.bat.
