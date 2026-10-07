@@ -66,7 +66,7 @@ copy_source() {
     "$SOURCE_ROOT/$name/" "$TEST_ROOT/$name/"
 }
 
-for component in backend frontend e2e; do
+for component in backend frontend e2e deploy; do
   copy_source "$component"
 done
 
