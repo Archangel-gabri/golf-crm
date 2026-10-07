@@ -20,6 +20,7 @@ from .routers import (
 from .catalog_sync import ensure_official_price_catalog
 from .migrations import apply_migrations
 from . import audit
+from .log_safety import install_access_log_redaction
 
 log = logging.getLogger("golfadmin.autocomplete")
 
@@ -155,6 +156,8 @@ async def lifespan(app: FastAPI):
             except (asyncio.CancelledError, Exception):
                 pass
 
+
+install_access_log_redaction()
 
 app = FastAPI(
     title="GolfAdmin API",

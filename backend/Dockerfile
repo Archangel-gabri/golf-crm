@@ -29,6 +29,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
+# Access log: метод и путь без query string (%(U)s) и без Referer — в query ходят
+# имена/телефоны клиентов (GET /customers?q=...). Для uvicorn-воркера то же делает
+# фильтр app/log_safety.py.
 # gunicorn with a single uvicorn worker — sufficient for current 6-user scale.
 # IMPORTANT: stays at --workers 1 until two prerequisites are met (Phase 5 plan):
 #   1. The autocomplete/no-show scheduler in app/main.py is moved to a separate
@@ -42,5 +45,6 @@ CMD ["gunicorn", "app.main:app", \
      "--workers", "1", \
      "--bind", "0.0.0.0:8000", \
      "--access-logfile", "-", \
+     "--access-logformat", "%(h)s \"%(m)s %(U)s\" %(s)s %(b)s %(L)s", \
      "--error-logfile", "-", \
      "--timeout", "60"]

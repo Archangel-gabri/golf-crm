@@ -170,7 +170,7 @@ def create_customer(
     db.add(c)
     db.flush()
     audit.log(db, user, AuditAction.CREATE.value, "customer", c.id,
-              summary=f"Создан клиент {c.name}")
+              summary=f"Создан клиент #{c.id}")
     db.commit()
     broadcast({"type": "customers"})
     db.refresh(c)
@@ -231,11 +231,14 @@ def update_customer(
     if not c:
         raise HTTPException(404, "Not found")
     _ensure_trainer_can_see(db, user, customer_id)
-    before = {k: getattr(c, k) for k in payload.model_dump()}
-    for k, v in payload.model_dump().items():
+    new_values = payload.model_dump()
+    before = {k: getattr(c, k) for k in new_values}
+    for k, v in new_values.items():
         setattr(c, k, v)
     audit.log(db, user, AuditAction.UPDATE.value, "customer", c.id,
-              summary=f"Изменён {c.name}", before=before, after=payload.model_dump(mode="json"))
+              summary=f"Изменён клиент #{c.id}",
+              before=audit.customer_snapshot(before),
+              after=audit.customer_snapshot(new_values, changed_against=before))
     db.commit()
     broadcast({"type": "customers"})
     db.refresh(c)
@@ -257,6 +260,6 @@ def delete_customer(
         raise HTTPException(404, "Not found")
     db.delete(c)
     audit.log(db, user, AuditAction.DELETE.value, "customer", customer_id,
-              summary=f"Удалён клиент {c.name}")
+              summary=f"Удалён клиент #{customer_id}")
     db.commit()
     broadcast({"type": "customers"})

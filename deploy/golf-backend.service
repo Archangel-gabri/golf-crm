@@ -13,6 +13,7 @@ ExecStart=/opt/golf/backend/venv/bin/gunicorn app.main:app \
     --workers 4 \
     --bind 127.0.0.1:8000 \
     --access-logfile - \
+    --access-logformat '%%(h)s "%%(m)s %%(U)s" %%(s)s %%(b)s %%(L)s' \
     --error-logfile - \
     --timeout 60
 Restart=on-failure
