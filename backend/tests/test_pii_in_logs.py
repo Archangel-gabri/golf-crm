@@ -131,3 +131,43 @@ def test_audit_log_strips_pii_even_if_caller_passes_full_model():
         db.rollback()
     assert entry.before == {"consent_marketing": False}
     assert entry.after == {"consent_marketing": True}
+
+
+def test_booking_cancel_reason_text_not_in_audit(synthetic_login):  # noqa: F811
+    from datetime import datetime, timedelta
+
+    from app.csrf import CSRF_COOKIE, CSRF_HEADER
+    from app.db import SessionLocal
+    from app.models import AuditLog, Booking
+    from sqlalchemy import select
+
+    http, credentials, _ = synthetic_login
+    assert http.post("/auth/login", json=credentials).status_code == 200
+    h = {CSRF_HEADER: http.cookies[CSRF_COOKIE]}
+    start = datetime(2031, 1, 1, 10, 0)
+    with SessionLocal() as db:
+        b = Booking(starts_at=start, ends_at=start + timedelta(hours=1), status="confirmed")
+        db.add(b)
+        db.commit()
+        bid = b.id
+    reason = f"{PII_NAME} {PII_PHONE} заболел"
+    r = http.post(f"/bookings/{bid}/transition", params={"to": "cancelled", "reason": reason}, headers=h)
+    assert r.status_code == 200, r.text
+    with SessionLocal() as db:
+        row = db.execute(select(AuditLog).where(AuditLog.entity == "booking", AuditLog.entity_id == bid)
+                         .order_by(AuditLog.id.desc())).scalars().first()
+    dump = repr((row.summary, row.before, row.after))
+    for secret in ALL_PII + ("заболел",):
+        assert secret not in dump
+    assert row.summary.startswith("confirmed → cancelled")  # переход виден
+
+
+def test_query_param_names_are_escaped_in_access_log():
+    from app.log_safety import redact_target
+
+    assert redact_target("/customers?q=x&limit=5") == "/customers?q=[скрыто]&limit=[скрыто]"
+    for target in ("/c?q=x&%0AFORGED=ignored", "/c?%D0%98%D0%B2%D0%B0%D0%BD=1", "/c?a%00b=1",
+                   "/c?" + "n" * 41 + "=1", "/c?%1b[31m=1"):
+        out = redact_target(target)
+        assert out.isprintable() and "\n" not in out and "\r" not in out, repr(out)
+        assert "FORGED" not in out and "Иван" not in out and "\x1b" not in out, repr(out)

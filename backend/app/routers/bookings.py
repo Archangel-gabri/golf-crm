@@ -337,7 +337,7 @@ def transition(
     }
     audit.log(db, user, action_map.get(to, AuditAction.STATUS_CHANGE.value),
               "booking", b.id,
-              summary=f"{before['status']} → {to}" + (f" ({reason})" if reason else ""),
+              summary=f"{before['status']} → {to}" + (" (причина указана)" if reason else ""),
               before=before, after={"status": b.status})
     db.commit()
     broadcast({"type": "bookings"})
